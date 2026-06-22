@@ -1,6 +1,5 @@
-name = "ImageGenie"
-client_id = "70370226a19c7f0976f1924044096244"
-application_url = "https://imagegenie.onkra.online/"
+name = "OptiPix"
+application_url = "https://optipix.onkra.online"
 embedded = true
 
 
@@ -12,9 +11,9 @@ direct_api_mode = "online"
 
 [auth]
 redirect_urls = [
-  "https://imagegenie.onkra.online/auth/callback",
-  "https://imagegenie.onkra.online/auth/shopify/callback",
-  "https://imagegenie.onkra.online/api/auth/callback"
+  "https://optipix.onkra.online/auth/callback",
+  "https://optipix.onkra.online/auth/shopify/callback",
+  "https://optipix.onkra.online/api/auth/callback"
 ]
 
 [webhooks]
@@ -23,11 +22,11 @@ api_version = "2026-04"
 [[webhooks.subscriptions]]
 topics = [ "app/uninstalled" ]
 compliance_topics = [ "customers/redact", "customers/data_request", "shop/redact" ]
-uri = "https://imagegenie.onkra.online/webhooks/app/uninstalled"
+uri = "https://optipix.onkra.online/webhooks/app/uninstalled"
 
 [[webhooks.subscriptions]]
 topics = [ "products/create" ]
-uri = "https://imagegenie.onkra.online/webhooks/products/create"
+uri = "https://optipix.onkra.online/webhooks/products/create"
 
 [pos]
 embedded = false
