@@ -1,66 +1,79 @@
-/* OptiPix Brand Theme — Purple/Violet */
+/* OptiPix Brand Theme — Sunset Coral (distinct from ImageGenie purple) */
 
 :root {
-  --pb-purple: #7C3AED;
-  --pb-purple-dark: #6D28D9;
-  --pb-purple-darker: #5B21B6;
-  --pb-purple-light: #EDE9FE;
-  --pb-purple-mid: #DDD6FE;
-  --pb-gradient: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%);
-  --pb-gradient-soft: linear-gradient(135deg, #EDE9FE 0%, #DDD6FE 100%);
+  --op-1: #FF7A45;            /* sunset orange */
+  --op-2: #F4476B;            /* coral rose    */
+  --op-accent: #F4476B;
+  --op-accent-dark: #D62F57;
+  --op-ink: #1A1426;          /* warm near-black */
+  --op-soft-1: #FFF1EC;
+  --op-soft-2: #FFE4EC;
+  --op-grad: linear-gradient(135deg, #FF7A45 0%, #F4476B 100%);
+  --op-grad-dark: linear-gradient(135deg, #F4476B 0%, #B91C50 100%);
+  --op-grad-soft: linear-gradient(135deg, #FFF1EC 0%, #FFE4EC 100%);
+  --op-tint: #FFF7F4;         /* page wash */
+  --op-ring: rgba(244, 71, 107, 0.18);
 }
 
 /* ── Primary buttons ───────────────────────── */
 .Polaris-Button--variantPrimary {
-  background: var(--pb-gradient) !important;
-  border-color: var(--pb-purple) !important;
-  box-shadow: 0 1px 3px rgba(124, 58, 237, 0.3) !important;
+  background: var(--op-grad) !important;
+  border-color: var(--op-2) !important;
+  box-shadow: 0 2px 8px rgba(244, 71, 107, 0.32) !important;
 }
 .Polaris-Button--variantPrimary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #6D28D9 0%, #4C1D95 100%) !important;
-  border-color: var(--pb-purple-dark) !important;
+  background: var(--op-grad-dark) !important;
+  border-color: var(--op-accent-dark) !important;
 }
 .Polaris-Button--variantPrimary:active:not(:disabled) {
-  background: linear-gradient(135deg, #5B21B6 0%, #3B0764 100%) !important;
+  background: linear-gradient(135deg, #D62F57 0%, #8F1740 100%) !important;
 }
 
 /* ── Links ─────────────────────────────────── */
-.Polaris-Link {
-  color: var(--pb-purple) !important;
-}
-.Polaris-Link:hover {
-  color: var(--pb-purple-dark) !important;
-}
+.Polaris-Link { color: var(--op-accent) !important; }
+.Polaris-Link:hover { color: var(--op-accent-dark) !important; }
 
 /* ── Focus rings ───────────────────────────── */
 .Polaris-TextField__Input:focus {
-  border-color: var(--pb-purple) !important;
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15) !important;
+  border-color: var(--op-accent) !important;
+  box-shadow: 0 0 0 3px var(--op-ring) !important;
 }
 
 /* ── Checkboxes ────────────────────────────── */
 .Polaris-Checkbox__Input:checked + .Polaris-Checkbox__Backdrop {
-  background: var(--pb-purple) !important;
-  border-color: var(--pb-purple) !important;
+  background: var(--op-accent) !important;
+  border-color: var(--op-accent) !important;
 }
 
-/* ── OptiPix hero banner ─────────────────── */
+/* ── OptiPix hero banner ───────────────────── */
 .pb-hero {
-  background: var(--pb-gradient);
-  border-radius: 12px;
-  padding: 32px;
+  position: relative;
+  background: var(--op-grad);
+  border-radius: 18px;
+  padding: 36px 32px;
   color: white;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
+  overflow: hidden;
+  box-shadow: 0 14px 40px rgba(244, 71, 107, 0.28);
+}
+.pb-hero::after {
+  content: "";
+  position: absolute;
+  top: -60px; right: -40px;
+  width: 220px; height: 220px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
 }
 .pb-hero h1 {
-  font-size: 28px;
-  font-weight: 700;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
   margin: 0 0 8px 0;
   color: white;
 }
 .pb-hero p {
   font-size: 15px;
-  opacity: 0.88;
+  opacity: 0.92;
   margin: 0;
   color: white;
 }
@@ -68,121 +81,99 @@
 /* ── Stat cards ─────────────────────────────── */
 .pb-stat-card {
   background: white;
-  border: 1px solid #E5E7EB;
-  border-radius: 10px;
+  border: 1px solid #F1E4DE;
+  border-radius: 14px;
   padding: 20px;
   text-align: center;
-  transition: box-shadow 0.2s;
+  transition: box-shadow 0.2s, transform 0.2s;
 }
 .pb-stat-card:hover {
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.12);
+  box-shadow: 0 8px 22px rgba(244, 71, 107, 0.14);
+  transform: translateY(-2px);
 }
 .pb-stat-value {
   font-size: 32px;
-  font-weight: 700;
-  color: var(--pb-purple);
+  font-weight: 800;
+  background: var(--op-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   margin: 0;
 }
-.pb-stat-label {
-  font-size: 13px;
-  color: #6B7280;
-  margin: 4px 0 0 0;
-}
+.pb-stat-label { font-size: 13px; color: #6B7280; margin: 4px 0 0 0; }
 
 /* ── Feature cards ──────────────────────────── */
 .pb-feature-card {
   background: white;
-  border: 1px solid #E5E7EB;
-  border-radius: 12px;
+  border: 1px solid #F1E4DE;
+  border-radius: 16px;
   padding: 24px;
-  transition: box-shadow 0.2s, border-color 0.2s;
+  transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
   height: 100%;
 }
 .pb-feature-card:hover {
-  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.1);
-  border-color: var(--pb-purple-mid);
+  box-shadow: 0 10px 28px rgba(244, 71, 107, 0.12);
+  border-color: #F8C6B8;
+  transform: translateY(-3px);
 }
 .pb-feature-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: var(--pb-gradient-soft);
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--op-grad-soft);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  font-size: 24px;
   margin-bottom: 14px;
 }
-.pb-feature-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #111827;
-  margin: 0 0 8px 0;
-}
-.pb-feature-desc {
-  font-size: 13px;
-  color: #6B7280;
-  line-height: 1.5;
-  margin: 0 0 16px 0;
-}
-.pb-feature-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 18px 0;
-}
+.pb-feature-title { font-size: 16px; font-weight: 700; color: var(--op-ink); margin: 0 0 8px 0; }
+.pb-feature-desc { font-size: 13px; color: #6B7280; line-height: 1.5; margin: 0 0 16px 0; }
+.pb-feature-list { list-style: none; padding: 0; margin: 0 0 18px 0; }
 .pb-feature-list li {
-  font-size: 13px;
-  color: #374151;
-  padding: 3px 0;
-  padding-left: 18px;
-  position: relative;
+  font-size: 13px; color: #374151;
+  padding: 3px 0 3px 20px; position: relative;
 }
 .pb-feature-list li::before {
   content: "✓";
-  color: var(--pb-purple);
-  position: absolute;
-  left: 0;
-  font-weight: 600;
+  color: var(--op-accent);
+  position: absolute; left: 0; font-weight: 700;
 }
 
-/* ── Page header accent ──────────────────────── */
+/* ── Page header accent — solid card w/ left bar (distinct shape) ── */
 .pb-page-header {
-  background: var(--pb-gradient-soft);
-  border: 1px solid var(--pb-purple-mid);
-  border-radius: 10px;
+  background: #FFFFFF;
+  border: 1px solid #F1E4DE;
+  border-left: 5px solid transparent;
+  border-image: var(--op-grad) 1;
+  border-radius: 12px;
   padding: 16px 20px;
   margin-bottom: 4px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
+  box-shadow: 0 4px 14px rgba(244, 71, 107, 0.07);
 }
 .pb-page-header-icon {
-  font-size: 24px;
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: var(--op-grad);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1;
+  box-shadow: 0 4px 12px rgba(244, 71, 107, 0.3);
 }
-.pb-page-header-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--pb-purple-darker);
-  margin: 0;
-}
-.pb-page-header-sub {
-  font-size: 12px;
-  color: #7C3AED;
-  opacity: 0.8;
-  margin: 2px 0 0 0;
-}
+.pb-page-header-title { font-size: 15px; font-weight: 700; color: var(--op-ink); margin: 0; }
+.pb-page-header-sub { font-size: 12px; color: var(--op-accent); opacity: 0.9; margin: 2px 0 0 0; }
 
 /* ── Step badges ────────────────────────────── */
 .pb-step-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 28px; height: 28px;
   border-radius: 50%;
-  background: var(--pb-gradient);
+  background: var(--op-grad);
   color: white;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 13px; font-weight: 700;
   flex-shrink: 0;
 }
