@@ -1,25 +1,115 @@
-import { useNavigate } from "react-router";
+import { useNavigate, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { getBillingStateCached } from "../billing.server";
+import { getUsage } from "../usage.server";
+import { entitled } from "../plans.server";
+import db from "../db.server";
 import {
   Page,
   Layout,
   Card,
   Button,
+  Badge,
   Text,
   BlockStack,
   InlineStack,
   Box,
+  ProgressBar,
   Divider,
 } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-  return null;
+  const { admin, session } = await authenticate.admin(request);
+
+  let plan = null;
+  try {
+    plan = (await getBillingStateCached(admin, session.shop)).plan;
+  } catch (e) {
+    if (e instanceof Response) throw e; // let re-auth propagate
+  }
+
+  let usage = { imagesUsed: 0 };
+  let autoOptimize = false;
+  try {
+    usage = await getUsage(session.shop);
+    const settings = await db.shopSettings.findUnique({ where: { shop: session.shop } });
+    autoOptimize = settings?.autoOptimize ?? false;
+  } catch { /* usage/settings tables not ready — defaults */ }
+
+  return {
+    plan: {
+      name: plan?.name || "Free",
+      tier: plan?.tier || "free",
+      monthlyImages: plan?.monthlyImages ?? 100,
+      pageSpeed: entitled(plan, "pageSpeed"),
+      autoOptimizeAllowed: entitled(plan, "autoOptimize"),
+    },
+    usage,
+    autoOptimize,
+  };
 };
 
 export default function Index() {
   const navigate = useNavigate();
+  const { plan, usage, autoOptimize } = useLoaderData();
+
+  const quota = plan.monthlyImages || 0;
+  const used = usage?.imagesUsed || 0;
+  const remaining = Math.max(0, quota - used);
+  const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+  const fmt = (n) => Number(n).toLocaleString();
+
+  const autoStatus = !plan.autoOptimizeAllowed
+    ? { label: "Growth & up", tone: "attention" }
+    : autoOptimize
+      ? { label: "On", tone: "success" }
+      : { label: "Off", tone: undefined };
+
+  // Tool rows — a horizontal layout, distinct from the old equal 3-card grid.
+  const tools = [
+    {
+      icon: "⚡",
+      title: "Image Optimizer",
+      desc: "Compress & convert product images to WebP — up to 70% smaller, originals replaced safely.",
+      cta: "Open optimizer",
+      onClick: () => navigate("/app/productoptimization"),
+      available: true,
+    },
+    {
+      icon: "✨",
+      title: "AI Alt Text",
+      desc: "Generate SEO alt text for every image with AI vision, then bulk-apply in one click.",
+      cta: "Generate alt text",
+      onClick: () => navigate("/app/alttextsuggestions"),
+      available: true,
+    },
+    {
+      icon: "🔁",
+      title: "Auto-optimize new products",
+      desc: "Set & forget — every newly created product gets optimized automatically in the background.",
+      cta: plan.autoOptimizeAllowed ? "Manage" : "Upgrade to Growth",
+      onClick: () => navigate(plan.autoOptimizeAllowed ? "/app/productoptimization" : "/app/billing"),
+      available: plan.autoOptimizeAllowed,
+      badge: autoStatus,
+    },
+    {
+      icon: "📊",
+      title: "Page Speed Reports",
+      desc: "Track Core Web Vitals (LCP, CLS, TBT) and see before/after gains per product page.",
+      cta: plan.pageSpeed ? "View reports" : "Upgrade to Growth",
+      onClick: () => navigate(plan.pageSpeed ? "/app/pagespeedimpactreports" : "/app/billing"),
+      available: plan.pageSpeed,
+      badge: plan.pageSpeed ? undefined : { label: "Growth & up", tone: "attention" },
+    },
+  ];
+
+  const stats = [
+    { label: "Current plan", value: plan.name },
+    { label: "Images used", value: fmt(used) },
+    { label: "Images left", value: fmt(remaining) },
+    { label: "Auto-optimize", value: autoStatus.label },
+  ];
 
   return (
     <Page>
@@ -27,117 +117,79 @@ export default function Index() {
       <div className="pb-hero">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
           <BlockStack gap="200">
-            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: "white" }}>
-              Welcome to OptiPix
-            </h1>
-            <p style={{ fontSize: 14, opacity: 0.88, margin: 0, color: "white" }}>
-              Image Optimization &amp; SEO Suite — compress images, generate AI alt text, track performance
-            </p>
+            <h1>Welcome to OptiPix</h1>
+            <p>Image optimization &amp; SEO suite — compress, auto-generate alt text, and rank faster.</p>
           </BlockStack>
-          <Button
-            variant="primary"
-            onClick={() => navigate("/app/alttextsuggestions")}
-            size="large"
-          >
-            Get Started
+          <Button variant="primary" size="large" onClick={() => navigate("/app/productoptimization")}>
+            Optimize images
           </Button>
         </InlineStack>
       </div>
 
       <Layout>
-        {/* 3 feature cards */}
+        {/* Dashboard stat strip */}
         <Layout.Section>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-
-            {/* Alt Text */}
-            <div className="pb-feature-card">
-              <div className="pb-feature-icon">✨</div>
-              <div className="pb-step-badge" style={{ marginBottom: 10 }}>1</div>
-              <p className="pb-feature-title">AI Alt Text Generator</p>
-              <p className="pb-feature-desc">
-                Use AI vision to write SEO-optimized alt text for every product image automatically.
-              </p>
-              <ul className="pb-feature-list">
-                <li>OpenAI GPT-4o-mini</li>
-                <li>Anthropic Claude Haiku</li>
-                <li>SEO score per image</li>
-                <li>Bulk apply in one click</li>
-              </ul>
-              <Button variant="primary" onClick={() => navigate("/app/alttextsuggestions")} fullWidth>
-                Generate Alt Text
-              </Button>
-            </div>
-
-            {/* Image Optimization */}
-            <div className="pb-feature-card">
-              <div className="pb-feature-icon">⚡</div>
-              <div className="pb-step-badge" style={{ marginBottom: 10 }}>2</div>
-              <p className="pb-feature-title">Image Optimizer</p>
-              <p className="pb-feature-desc">
-                Compress and convert product images to WebP — reduce file sizes by up to 70%.
-              </p>
-              <ul className="pb-feature-list">
-                <li>Automatic WebP conversion</li>
-                <li>Up to 70% size reduction</li>
-                <li>Batch all products</li>
-                <li>Replaces original images</li>
-              </ul>
-              <Button variant="primary" onClick={() => navigate("/app/productoptimization")} fullWidth>
-                Optimize Images
-              </Button>
-            </div>
-
-            {/* Page Speed */}
-            <div className="pb-feature-card">
-              <div className="pb-feature-icon">📊</div>
-              <div className="pb-step-badge" style={{ marginBottom: 10 }}>3</div>
-              <p className="pb-feature-title">Page Speed Reports</p>
-              <p className="pb-feature-desc">
-                Track Core Web Vitals and see before/after performance metrics for every product page.
-              </p>
-              <ul className="pb-feature-list">
-                <li>Core Web Vitals (LCP, FID, CLS)</li>
-                <li>Before / after comparison</li>
-                <li>Per-product analytics</li>
-                <li>Performance recommendations</li>
-              </ul>
-              <Button variant="primary" onClick={() => navigate("/app/pagespeedimpactreports")} fullWidth>
-                View Reports
-              </Button>
-            </div>
-
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+            {stats.map((s) => (
+              <div key={s.label} className="pb-stat-card">
+                <p className="pb-stat-value">{s.value}</p>
+                <p className="pb-stat-label">{s.label}</p>
+              </div>
+            ))}
           </div>
         </Layout.Section>
 
-        {/* Quick tips */}
+        {/* Monthly usage */}
         <Layout.Section>
           <Card>
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Recommended Workflow</Text>
-              <Divider />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                <InlineStack gap="300" blockAlign="start" wrap={false}>
-                  <div className="pb-step-badge">1</div>
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" as="p" fontWeight="semibold">Generate Alt Text first</Text>
-                    <Text variant="bodySm" as="p" tone="subdued">AI writes SEO descriptions before images are replaced</Text>
-                  </BlockStack>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text variant="headingSm" as="h2">Monthly image usage</Text>
+                  <Badge tone={plan.tier === "free" ? undefined : "success"}>{`${plan.name} plan`}</Badge>
                 </InlineStack>
-                <InlineStack gap="300" blockAlign="start" wrap={false}>
-                  <div className="pb-step-badge">2</div>
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" as="p" fontWeight="semibold">Optimize all products</Text>
-                    <Text variant="bodySm" as="p" tone="subdued">Compress images — faster store, better rankings</Text>
-                  </BlockStack>
-                </InlineStack>
-                <InlineStack gap="300" blockAlign="start" wrap={false}>
-                  <div className="pb-step-badge">3</div>
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" as="p" fontWeight="semibold">Track improvements</Text>
-                    <Text variant="bodySm" as="p" tone="subdued">Monitor Core Web Vitals and PageSpeed gains</Text>
-                  </BlockStack>
-                </InlineStack>
-              </div>
+                <Button variant="plain" onClick={() => navigate("/app/billing")}>Manage plan</Button>
+              </InlineStack>
+              <ProgressBar progress={pct} size="small" tone={pct >= 100 ? "critical" : "primary"} />
+              <Text variant="bodySm" as="p" tone="subdued">
+                {`${fmt(used)} of ${fmt(quota)} images this month · ${fmt(remaining)} remaining`}
+              </Text>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Tools — horizontal rows */}
+        <Layout.Section>
+          <Card padding="0">
+            <BlockStack gap="0">
+              {tools.map((t, i) => (
+                <div key={t.title}>
+                  {i > 0 && <Divider />}
+                  <Box padding="400">
+                    <InlineStack align="space-between" blockAlign="center" wrap={false} gap="400">
+                      <InlineStack gap="400" blockAlign="center" wrap={false}>
+                        <div className="pb-feature-icon" style={{ marginBottom: 0 }}>{t.icon}</div>
+                        <BlockStack gap="100">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Text variant="headingSm" as="h3">{t.title}</Text>
+                            {t.badge && <Badge tone={t.badge.tone}>{t.badge.label}</Badge>}
+                          </InlineStack>
+                          <Text variant="bodySm" as="p" tone="subdued">{t.desc}</Text>
+                        </BlockStack>
+                      </InlineStack>
+                      <Box minWidth="160px">
+                        <Button
+                          variant={t.available ? "primary" : "secondary"}
+                          onClick={t.onClick}
+                          fullWidth
+                        >
+                          {t.cta}
+                        </Button>
+                      </Box>
+                    </InlineStack>
+                  </Box>
+                </div>
+              ))}
             </BlockStack>
           </Card>
         </Layout.Section>
