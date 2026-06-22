@@ -1,0 +1,188 @@
+/* OptiPix Brand Theme — Purple/Violet */
+
+:root {
+  --pb-purple: #7C3AED;
+  --pb-purple-dark: #6D28D9;
+  --pb-purple-darker: #5B21B6;
+  --pb-purple-light: #EDE9FE;
+  --pb-purple-mid: #DDD6FE;
+  --pb-gradient: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%);
+  --pb-gradient-soft: linear-gradient(135deg, #EDE9FE 0%, #DDD6FE 100%);
+}
+
+/* ── Primary buttons ───────────────────────── */
+.Polaris-Button--variantPrimary {
+  background: var(--pb-gradient) !important;
+  border-color: var(--pb-purple) !important;
+  box-shadow: 0 1px 3px rgba(124, 58, 237, 0.3) !important;
+}
+.Polaris-Button--variantPrimary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #6D28D9 0%, #4C1D95 100%) !important;
+  border-color: var(--pb-purple-dark) !important;
+}
+.Polaris-Button--variantPrimary:active:not(:disabled) {
+  background: linear-gradient(135deg, #5B21B6 0%, #3B0764 100%) !important;
+}
+
+/* ── Links ─────────────────────────────────── */
+.Polaris-Link {
+  color: var(--pb-purple) !important;
+}
+.Polaris-Link:hover {
+  color: var(--pb-purple-dark) !important;
+}
+
+/* ── Focus rings ───────────────────────────── */
+.Polaris-TextField__Input:focus {
+  border-color: var(--pb-purple) !important;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15) !important;
+}
+
+/* ── Checkboxes ────────────────────────────── */
+.Polaris-Checkbox__Input:checked + .Polaris-Checkbox__Backdrop {
+  background: var(--pb-purple) !important;
+  border-color: var(--pb-purple) !important;
+}
+
+/* ── OptiPix hero banner ─────────────────── */
+.pb-hero {
+  background: var(--pb-gradient);
+  border-radius: 12px;
+  padding: 32px;
+  color: white;
+  margin-bottom: 20px;
+}
+.pb-hero h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 8px 0;
+  color: white;
+}
+.pb-hero p {
+  font-size: 15px;
+  opacity: 0.88;
+  margin: 0;
+  color: white;
+}
+
+/* ── Stat cards ─────────────────────────────── */
+.pb-stat-card {
+  background: white;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  transition: box-shadow 0.2s;
+}
+.pb-stat-card:hover {
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.12);
+}
+.pb-stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--pb-purple);
+  margin: 0;
+}
+.pb-stat-label {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 4px 0 0 0;
+}
+
+/* ── Feature cards ──────────────────────────── */
+.pb-feature-card {
+  background: white;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 24px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+  height: 100%;
+}
+.pb-feature-card:hover {
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.1);
+  border-color: var(--pb-purple-mid);
+}
+.pb-feature-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--pb-gradient-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 14px;
+}
+.pb-feature-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 8px 0;
+}
+.pb-feature-desc {
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.5;
+  margin: 0 0 16px 0;
+}
+.pb-feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 18px 0;
+}
+.pb-feature-list li {
+  font-size: 13px;
+  color: #374151;
+  padding: 3px 0;
+  padding-left: 18px;
+  position: relative;
+}
+.pb-feature-list li::before {
+  content: "✓";
+  color: var(--pb-purple);
+  position: absolute;
+  left: 0;
+  font-weight: 600;
+}
+
+/* ── Page header accent ──────────────────────── */
+.pb-page-header {
+  background: var(--pb-gradient-soft);
+  border: 1px solid var(--pb-purple-mid);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pb-page-header-icon {
+  font-size: 24px;
+}
+.pb-page-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pb-purple-darker);
+  margin: 0;
+}
+.pb-page-header-sub {
+  font-size: 12px;
+  color: #7C3AED;
+  opacity: 0.8;
+  margin: 2px 0 0 0;
+}
+
+/* ── Step badges ────────────────────────────── */
+.pb-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--pb-gradient);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}

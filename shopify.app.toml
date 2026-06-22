@@ -1,0 +1,36 @@
+name = "ImageGenie"
+client_id = "70370226a19c7f0976f1924044096244"
+application_url = "https://imagegenie.onkra.online/"
+embedded = true
+
+
+[access_scopes]
+scopes = "write_products,write_files"
+
+[access.admin]
+direct_api_mode = "online"
+
+[auth]
+redirect_urls = [
+  "https://imagegenie.onkra.online/auth/callback",
+  "https://imagegenie.onkra.online/auth/shopify/callback",
+  "https://imagegenie.onkra.online/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-04"
+
+[[webhooks.subscriptions]]
+topics = [ "app/uninstalled" ]
+compliance_topics = [ "customers/redact", "customers/data_request", "shop/redact" ]
+uri = "https://imagegenie.onkra.online/webhooks/app/uninstalled"
+
+[[webhooks.subscriptions]]
+topics = [ "products/create" ]
+uri = "https://imagegenie.onkra.online/webhooks/products/create"
+
+[pos]
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = false
