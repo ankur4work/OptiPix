@@ -42,7 +42,7 @@ export const loader = async ({ request }) => {
 
   let state = { hasActivePlan: false, plan: null };
   try {
-    state = await getBillingState(admin);
+    state = await getBillingState(admin, session.shop);
   } catch (e) {
     if (e instanceof Response) throw e;
   }

@@ -48,11 +48,34 @@ const CANCEL_MUTATION = `#graphql
 
 const FALLBACK_APP_HANDLE = "optipix-3";
 
+// Dev-only plan override. Development stores cannot approve PAID managed-pricing
+// subscriptions (Shopify restriction), so paid tiers can't be tested by
+// subscribing. Set DEV_PLAN_OVERRIDE=<tier> (e.g. "pro") to force a tier for
+// testing, optionally scoped with DEV_PLAN_OVERRIDE_SHOP=<shop>.myshopify.com.
+// Returns null (no override) unless DEV_PLAN_OVERRIDE is set, so it's inert in
+// production. NEVER set these env vars on the live/production deployment.
+function devPlanOverride(shop) {
+  const tier = process.env.DEV_PLAN_OVERRIDE;
+  if (!tier) return null;
+  const only = process.env.DEV_PLAN_OVERRIDE_SHOP;
+  if (only && shop && shop !== only) return null;
+  const plan = getPlanByName(tier);
+  return {
+    appHandle: FALLBACK_APP_HANDLE,
+    activeSubscription: { name: plan.name, status: "ACTIVE", test: true },
+    hasActivePlan: true,
+    plan,
+    override: true,
+  };
+}
+
 // Reads the app's handle + active subscription in a single round trip.
-// Returns { appHandle, activeSubscription, hasActivePlan }.
+// Returns { appHandle, activeSubscription, hasActivePlan, plan }.
 // Lets an auth Response (e.g. 401 reauthorize) propagate so the caller can
 // rethrow it; any other error is treated as "no active plan".
-export async function getBillingState(admin) {
+export async function getBillingState(admin, shop = null) {
+  const ov = devPlanOverride(shop);
+  if (ov) return ov;
   const resp = await admin.graphql(INSTALLATION_QUERY);
   const json = await resp.json();
   const inst = json?.data?.currentAppInstallation;
@@ -82,7 +105,7 @@ export async function getBillingStateCached(admin, shop) {
     const hit = billingCache.get(shop);
     if (hit && hit.expires > Date.now()) return hit.state;
   }
-  const state = await getBillingState(admin);
+  const state = await getBillingState(admin, shop);
   if (shop) {
     if (state.hasActivePlan) {
       billingCache.set(shop, { state, expires: Date.now() + BILLING_TTL_MS });
