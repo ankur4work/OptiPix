@@ -1,6 +1,21 @@
 import { useState, useCallback, useEffect } from 'react';
-import { useLoaderData, useSubmit, useNavigation, useActionData } from 'react-router';
+import { useLoaderData, useSubmit, useNavigation, useActionData, redirect } from 'react-router';
 import { authenticate } from '../shopify.server';
+import { getBillingStateCached } from '../billing.server';
+import { entitled } from '../plans.server';
+
+// Page Speed reports are a Growth+ feature. Resolve the shop's plan and return
+// its entitlement; lets a Response (re-auth) propagate, treats any other failure
+// as "not entitled" so the feature fails closed rather than leaking.
+async function pageSpeedAllowed(admin, shop) {
+  try {
+    const { plan } = await getBillingStateCached(admin, shop);
+    return entitled(plan, 'pageSpeed');
+  } catch (e) {
+    if (e instanceof Response) throw e;
+    return false;
+  }
+}
 import {
   Page,
   Layout,
@@ -163,6 +178,9 @@ function getOptimizationData(product) {
 
 export async function loader({ request }) {
   const { admin, session } = await authenticate.admin(request);
+  // Tier boundary: only Growth+ may view Page Speed reports. Others go back to
+  // the app home (where they see their plan + an upgrade path).
+  if (!(await pageSpeedAllowed(admin, session.shop))) throw redirect('/app');
   const url = new URL(request.url);
   const selectedPage = url.searchParams.get('page') || 'all';
 
@@ -281,7 +299,12 @@ export async function loader({ request }) {
 }
 
 export async function action({ request }) {
-  await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  // Tier boundary: block report runs for non-entitled plans (defends the action
+  // even if the UI were bypassed).
+  if (!(await pageSpeedAllowed(admin, session.shop))) {
+    return { error: 'Page Speed reports are available on the Growth plan and above.' };
+  }
   const formData = await request.formData();
   const actionType = formData.get('actionType');
 

@@ -1,15 +1,16 @@
-import { useState } from "react";
 import { PLAN_TIERS } from "../planCatalog";
 
 // 4-tier pricing comparison used by both the standalone pricing page and the
 // in-app pricing wall. Presentational only: `onSubscribe()` is invoked when any
-// "Choose plan" button is clicked (it routes the merchant to Shopify's hosted
-// managed-pricing page, where they pick the actual plan). `isLoading` disables
-// the buttons while that redirect is in flight.
+// plan button is clicked (it routes the merchant to Shopify's hosted managed-
+// pricing page, where the actual price/cycle live and are picked). `isLoading`
+// disables the buttons while that redirect is in flight.
+//
+// NOTE: we intentionally do NOT show prices here. Prices are owned by the
+// Partner Dashboard plans and can be changed there without a code deploy;
+// rendering them in-app would risk showing a stale amount. The merchant sees the
+// real price on Shopify's pricing page after clicking through.
 export default function PricingTiers({ onSubscribe, isLoading }) {
-  const [cycle, setCycle] = useState("monthly");
-  const yearly = cycle === "yearly";
-
   return (
     <div style={s.page}>
       <p style={s.appLabel}>OPTIPIX</p>
@@ -18,62 +19,34 @@ export default function PricingTiers({ onSubscribe, isLoading }) {
         Optimize images, boost speed, and rank higher — pick the plan that fits your catalog.
       </p>
 
-      <div style={s.toggleWrap}>
-        <div style={s.toggle}>
-          <button
-            type="button"
-            onClick={() => setCycle("monthly")}
-            style={!yearly ? s.toggleBtnActive : s.toggleBtn}
-          >
-            Monthly
-          </button>
-          <button
-            type="button"
-            onClick={() => setCycle("yearly")}
-            style={yearly ? s.toggleBtnActive : s.toggleBtn}
-          >
-            Yearly · 2 mo free
-          </button>
-        </div>
-      </div>
-
       <div style={s.grid}>
-        {PLAN_TIERS.map((tier) => {
-          const price = yearly ? tier.priceAnnual : tier.price;
-          const unit = price === 0 ? "" : yearly ? "/ yr" : "/ mo";
-          return (
-            <div key={tier.name} style={tier.popular ? s.cardPopular : s.card}>
-              {tier.popular && <div style={s.popularBadge}>MOST POPULAR</div>}
-              <p style={s.tierName}>{tier.name}</p>
-              <p style={s.tierTagline}>{tier.tagline}</p>
-              <div style={s.priceRow}>
-                <span style={s.priceCurrency}>$</span>
-                <span style={s.priceAmount}>{price}</span>
-                {unit && <span style={s.priceUnit}>&nbsp;{unit}</span>}
-              </div>
-              <button
-                type="button"
-                onClick={onSubscribe}
-                disabled={isLoading}
-                style={{
-                  ...(tier.popular ? s.ctaPrimary : s.ctaSecondary),
-                  opacity: isLoading ? 0.7 : 1,
-                  cursor: isLoading ? "not-allowed" : "pointer",
-                }}
-              >
-                {isLoading ? "Redirecting…" : price === 0 ? "Start free" : "Choose plan"}
-              </button>
-              <div style={s.featureList}>
-                {tier.features.map((f, i) => (
-                  <div key={i} style={s.featureRow}>
-                    <span style={s.check}>✓</span>
-                    <span style={s.featureText}>{f}</span>
-                  </div>
-                ))}
-              </div>
+        {PLAN_TIERS.map((tier) => (
+          <div key={tier.name} style={tier.popular ? s.cardPopular : s.card}>
+            {tier.popular && <div style={s.popularBadge}>MOST POPULAR</div>}
+            <p style={s.tierName}>{tier.name}</p>
+            <p style={s.tierTagline}>{tier.tagline}</p>
+            <button
+              type="button"
+              onClick={onSubscribe}
+              disabled={isLoading}
+              style={{
+                ...(tier.popular ? s.ctaPrimary : s.ctaSecondary),
+                opacity: isLoading ? 0.7 : 1,
+                cursor: isLoading ? "not-allowed" : "pointer",
+              }}
+            >
+              {isLoading ? "Redirecting…" : tier.price === 0 ? "Start free" : "Choose plan"}
+            </button>
+            <div style={s.featureList}>
+              {tier.features.map((f, i) => (
+                <div key={i} style={s.featureRow}>
+                  <span style={s.check}>✓</span>
+                  <span style={s.featureText}>{f}</span>
+                </div>
+              ))}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
       <p style={s.disclaimer}>Secure billing through Shopify · Cancel anytime</p>
