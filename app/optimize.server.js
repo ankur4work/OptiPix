@@ -113,7 +113,7 @@ export async function optimizeImage(imageUrl) {
 export async function uploadAndReplaceImage(admin, productId, originalMediaId, optimizedBuffer, altText) {
   const isWebP = optimizedBuffer[8] === 0x57 && optimizedBuffer[9] === 0x45;
   const mimeType = isWebP ? "image/webp" : "image/jpeg";
-  const filename = `optipix-${Date.now()}.${isWebP ? "webp" : "jpg"}`;
+  const filename = `pixelperfect-${Date.now()}.${isWebP ? "webp" : "jpg"}`;
 
   const stagedRes = await admin.graphql(
     `#graphql

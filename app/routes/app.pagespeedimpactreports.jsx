@@ -447,7 +447,7 @@ export default function PageSpeedImpactReports() {
 
   return (
     <Page
-      title="OptiPix — Page Speed Reports"
+      title="PixelPerfect — Page Speed Reports"
       subtitle="Measured image savings from your optimization runs, plus live PageSpeed tests"
     >
       <Layout>

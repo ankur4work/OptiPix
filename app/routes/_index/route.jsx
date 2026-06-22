@@ -18,7 +18,7 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>OptiPix</h1>
+        <h1 className={styles.heading}>PixelPerfect</h1>
         <p className={styles.text}>
           Image Optimization & SEO Suite for Shopify stores.
           Compress images, generate AI alt text, and track performance.

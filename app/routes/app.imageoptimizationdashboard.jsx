@@ -443,7 +443,7 @@ export default function ImageOptimizationDashboard() {
 
   return (
     <Page
-      title="OptiPix — Optimization Analytics"
+      title="PixelPerfect — Optimization Analytics"
       subtitle="Measured results from your image optimization runs"
       primaryAction={{ 
         content: 'Export Report', 

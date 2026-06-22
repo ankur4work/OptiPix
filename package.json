@@ -1,5 +1,5 @@
 {
-  "name": "optipix",
+  "name": "pixelperfect",
   "private": true,
   "scripts": {
     "build": "react-router build",

@@ -108,8 +108,8 @@ export default function BillingPage() {
 
   return (
     <Page
-      title="OptiPix — Billing"
-      subtitle="Manage your OptiPix subscription"
+      title="PixelPerfect — Billing"
+      subtitle="Manage your PixelPerfect subscription"
     >
       <Layout>
         {actionData?.cancelled && !hasActivePlan && (

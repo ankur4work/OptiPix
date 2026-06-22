@@ -1,4 +1,4 @@
-/* OptiPix Brand Theme — Sunset Coral (distinct from ImageGenie purple) */
+/* PixelPerfect Brand Theme — Sunset Coral (distinct from ImageGenie purple) */
 
 :root {
   --op-1: #FF7A45;            /* sunset orange */
@@ -45,7 +45,7 @@
   border-color: var(--op-accent) !important;
 }
 
-/* ── OptiPix hero banner ───────────────────── */
+/* ── PixelPerfect hero banner ───────────────────── */
 .pb-hero {
   position: relative;
   background: var(--op-grad);

@@ -28,7 +28,7 @@ export default function Auth() {
     <AppProvider embedded={false}>
       <s-page>
         <Form method="post">
-          <s-section heading="Log in to OptiPix">
+          <s-section heading="Log in to PixelPerfect">
             <s-text-field
               name="shop"
               label="Shop domain"

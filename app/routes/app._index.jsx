@@ -119,7 +119,7 @@ export default function Index() {
       <div className="pb-hero">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
           <BlockStack gap="200">
-            <h1>Welcome to OptiPix</h1>
+            <h1>Welcome to PixelPerfect</h1>
             <p>Image optimization &amp; SEO suite — compress, auto-generate alt text, and rank faster.</p>
           </BlockStack>
           <Button variant="primary" size="large" onClick={() => navigate("/app/productoptimization")}>
