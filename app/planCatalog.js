@@ -16,7 +16,6 @@ export const PLAN_TIERS = [
     features: [
       "100 images / month",
       "WebP conversion & compression",
-      "AI alt text",
       "Restore originals",
     ],
   },
@@ -29,6 +28,7 @@ export const PLAN_TIERS = [
     features: [
       "2,000 images / month",
       "Everything in Free",
+      "AI alt text",
       "SEO filenames",
       "Resize & crop",
       "Scheduled runs",

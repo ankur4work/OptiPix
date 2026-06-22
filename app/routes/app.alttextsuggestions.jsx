@@ -1,7 +1,21 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useLoaderData, useSubmit, useNavigation, useActionData, useFetcher } from 'react-router';
+import { useLoaderData, useSubmit, useNavigation, useActionData, useFetcher, redirect } from 'react-router';
 import { authenticate } from '../shopify.server';
+import { getBillingStateCached } from '../billing.server';
+import { entitled } from '../plans.server';
 import { setDefaultResultOrder } from 'node:dns';
+
+// AI alt text is a Starter+ feature. Returns whether the shop's plan includes it;
+// lets a re-auth Response propagate, treats other failures as not-entitled.
+async function altTextAllowed(admin, shop) {
+  try {
+    const { plan } = await getBillingStateCached(admin, shop);
+    return entitled(plan, 'altText');
+  } catch (e) {
+    if (e instanceof Response) throw e;
+    return false;
+  }
+}
 import { 
   Page, 
   Layout, 
@@ -111,7 +125,9 @@ const PRODUCTS_QUERY = `#graphql
 `;
 
 export async function loader({ request }) {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  // Tier boundary: AI alt text is Starter+. Free users go back to the app home.
+  if (!(await altTextAllowed(admin, session.shop))) throw redirect('/app');
 
   try {
     // Page through the whole catalog (metadata only, so this stays fast).
@@ -169,7 +185,11 @@ export async function loader({ request }) {
 }
 
 export async function action({ request }) {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  // Tier boundary: block alt-text generation for non-entitled (Free) plans.
+  if (!(await altTextAllowed(admin, session.shop))) {
+    return { error: 'AI alt text is available on the Starter plan and above.' };
+  }
   const formData = await request.formData();
   const actionType = formData.get('actionType');
 

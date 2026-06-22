@@ -45,7 +45,8 @@ export const PLANS = [
     price: 0,
     priceAnnual: 0,
     monthlyImages: 100,
-    features: feat("optimize", "webp", "altText", "revert"),
+    // AI alt text is intentionally NOT in Free — it's a Starter+ feature.
+    features: feat("optimize", "webp", "revert"),
   },
   {
     tier: "starter",

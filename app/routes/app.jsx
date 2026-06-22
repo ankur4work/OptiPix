@@ -25,15 +25,18 @@ export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
 
   let hasActivePlan = false;
-  let features = { pageSpeed: false };
+  let features = { pageSpeed: false, altText: false };
   try {
     // Subscription state gates the whole app. Cached per-shop (positive results
     // only) so paying merchants don't pay a Shopify roundtrip on every click;
     // a fresh subscribe still unlocks instantly since negatives aren't cached.
     const state = await getBillingStateCached(admin, session.shop);
     hasActivePlan = state.hasActivePlan;
-    // Entitlement booleans drive which nav items render (e.g. Page Speed).
-    features = { pageSpeed: entitled(state.plan, "pageSpeed") };
+    // Entitlement booleans drive which nav items render (Page Speed, Alt Text).
+    features = {
+      pageSpeed: entitled(state.plan, "pageSpeed"),
+      altText: entitled(state.plan, "altText"),
+    };
   } catch (e) {
     // Propagate redirect Responses (e.g. OAuth flow initiated by the library),
     // but treat 4xx Responses as an expired/revoked token — trigger re-auth
@@ -98,8 +101,10 @@ export default function App() {
           <>
             <ui-nav-menu>
               <a href="/app" rel="home">Home</a>
-              <a href="/app/alttextsuggestions">Alt Text Generator</a>
               <a href="/app/productoptimization">Image Optimization</a>
+              {features?.altText && (
+                <a href="/app/alttextsuggestions">Alt Text Generator</a>
+              )}
               {features?.pageSpeed && (
                 <a href="/app/pagespeedimpactreports">Page Speed Reports</a>
               )}

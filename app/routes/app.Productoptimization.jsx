@@ -247,7 +247,11 @@ export async function action({ request }) {
     try {
       const { plan } = await getBillingStateCached(admin, session.shop);
       const remainingQuota = await getRemaining(session.shop, plan);
-      return await optimizeBatch(admin, productId, { shop: session.shop, remainingQuota });
+      return await optimizeBatch(admin, productId, {
+        shop: session.shop,
+        remainingQuota,
+        genAlt: entitled(plan, 'altText'),
+      });
     } catch (error) {
       const msg = error?.graphQLErrors?.[0]?.message || error?.message || 'unknown error';
       console.error('[OPTIMIZE] product failed:', msg);

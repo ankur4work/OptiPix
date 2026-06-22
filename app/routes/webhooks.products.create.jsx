@@ -45,13 +45,14 @@ async function runAutoOptimize(shop, productGid) {
 
   const { plan } = await getBillingState(admin);
   if (!entitled(plan, "autoOptimize")) return; // plan changed since toggle was set
+  const genAlt = entitled(plan, "altText"); // Growth/Pro always include alt text
 
   // Loop batches until the product is fully optimized or the monthly quota runs
   // out. The 50-iteration ceiling is a safety backstop (250 images / batch of 6).
   for (let i = 0; i < 50; i++) {
     const remainingQuota = await getRemaining(shop, plan);
     if (remainingQuota <= 0) break;
-    const res = await optimizeBatch(admin, productGid, { shop, remainingQuota });
+    const res = await optimizeBatch(admin, productGid, { shop, remainingQuota, genAlt });
     if (!res.success || res.done || res.quotaExceeded || !res.advanced) break;
   }
 }

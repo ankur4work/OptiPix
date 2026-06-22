@@ -268,8 +268,10 @@ export async function writeSummary(admin, productId, totalImages, records) {
 //   shop           — when set, optimized images are metered via incrementUsage
 //   remainingQuota — max images this call may optimize (default: unlimited).
 //                    When 0 with images still pending, returns { quotaExceeded }.
+//   genAlt         — generate AI alt text for images missing it (default true).
+//                    Pass false for plans without the alt-text entitlement (Free).
 export async function optimizeBatch(admin, productId, opts = {}) {
-  const { shop = null, remainingQuota = Infinity } = opts;
+  const { shop = null, remainingQuota = Infinity, genAlt = true } = opts;
 
   // Query current media (MediaImage gids) + existing optimization metafields.
   const response = await admin.graphql(
@@ -350,8 +352,12 @@ export async function optimizeBatch(admin, productId, opts = {}) {
         };
       }
 
+      // Auto alt text is a Starter+ feature; Free plans (genAlt=false) keep the
+      // image's existing alt and skip AI generation.
       let altText = image.altText;
-      if (!altText || altText.length < 10) altText = await generateAIAltText(image.url, product.title);
+      if (genAlt && (!altText || altText.length < 10)) {
+        altText = await generateAIAltText(image.url, product.title);
+      }
 
       const newId = await uploadAndReplaceImage(admin, productId, image.id, opt.optimizedBuffer, altText);
       const key = `image_${newId.split("/").pop()}`;
