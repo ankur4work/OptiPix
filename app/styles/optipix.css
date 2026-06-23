@@ -63,6 +63,7 @@
   width: 220px; height: 220px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.12);
+  pointer-events: none; /* decorative only — must not block the hero button */
 }
 .pb-hero h1 {
   font-size: 30px;
