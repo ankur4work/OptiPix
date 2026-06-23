@@ -82,68 +82,90 @@ async function getAllProductHandles(admin) {
   return allProducts;
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// One PSI attempt. Throws { retryable } so the caller can decide to retry.
+async function pageSpeedAttempt(apiUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45000);
+  let response;
+  try {
+    response = await fetch(apiUrl, { signal: controller.signal });
+  } catch (e) {
+    // Network error or our 45s abort — transient, worth retrying.
+    const err = new Error(e?.name === 'AbortError' ? 'PageSpeed request timed out' : `PageSpeed network error: ${e?.message || e}`);
+    err.retryable = true;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.json())?.error?.message || ''; } catch { /* non-JSON */ }
+    const err = new Error(`PageSpeed API request failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    // 429 (rate limit) and 5xx are transient; other 4xx (bad/unreachable URL) are not.
+    err.retryable = response.status === 429 || response.status >= 500;
+    throw err;
+  }
+
+  const data = await response.json();
+  const lighthouseResult = data.lighthouseResult;
+  if (!lighthouseResult) {
+    // Sometimes PSI returns 200 with a lighthouse runtime error (e.g. page slow
+    // to load) — treat as retryable, a re-run often succeeds.
+    const err = new Error('No Lighthouse data in response');
+    err.retryable = true;
+    throw err;
+  }
+
+  const performanceScore = Math.round((lighthouseResult.categories.performance?.score || 0) * 100);
+  const audits = lighthouseResult.audits;
+  const lcpAudit = audits['largest-contentful-paint'];
+  const tbtAudit = audits['total-blocking-time'];
+  const clsAudit = audits['cumulative-layout-shift'];
+  const ttfbAudit = audits['server-response-time'];
+  const speedIndexAudit = audits['speed-index'];
+  const interactiveAudit = audits['interactive'];
+
+  return {
+    score: performanceScore,
+    lcp: lcpAudit?.numericValue ? parseFloat((lcpAudit.numericValue / 1000).toFixed(2)) : 0,
+    tbt: tbtAudit?.numericValue ? Math.round(tbtAudit.numericValue) : 0,
+    cls: clsAudit?.numericValue ? parseFloat(clsAudit.numericValue.toFixed(3)) : 0,
+    ttfb: ttfbAudit?.numericValue ? parseFloat((ttfbAudit.numericValue / 1000).toFixed(2)) : 0,
+    loadTime: interactiveAudit?.numericValue ? parseFloat((interactiveAudit.numericValue / 1000).toFixed(2)) : 0,
+    speedIndex: speedIndexAudit?.numericValue ? parseFloat((speedIndexAudit.numericValue / 1000).toFixed(2)) : 0,
+    timestamp: new Date().toISOString()
+  };
+}
+
 /**
  * Run a real Lighthouse performance test via Google PageSpeed Insights API.
- * Works without an API key at low rate limits; GOOGLE_PAGESPEED_API_KEY raises them.
+ * The keyless endpoint is rate-limited, so failures are often transient — we
+ * retry with backoff (up to 3 attempts) on 429/5xx/timeout, which makes the
+ * test reliable without requiring a GOOGLE_PAGESPEED_API_KEY (one still raises
+ * the limits further if set). Returns null only after all attempts fail.
  */
 async function runPageSpeedTest(url) {
-  try {
-    const apiKey = process.env.GOOGLE_PAGESPEED_API_KEY;
-    const keyParam = apiKey ? `&key=${apiKey}` : '';
-    const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=performance&strategy=mobile${keyParam}`;
+  const apiKey = process.env.GOOGLE_PAGESPEED_API_KEY;
+  const keyParam = apiKey ? `&key=${apiKey}` : '';
+  const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=performance&strategy=mobile${keyParam}`;
 
-    // PSI tests a live page on Google's servers and routinely takes 30–60s.
-    // Cap it so a hung request can't stall the action indefinitely.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55000);
-    let response;
+  const backoffs = [0, 2000, 5000]; // before attempts 1, 2, 3
+  let lastErr;
+  for (let attempt = 0; attempt < backoffs.length; attempt++) {
+    if (backoffs[attempt]) await sleep(backoffs[attempt]);
     try {
-      response = await fetch(apiUrl, { signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
+      return await pageSpeedAttempt(apiUrl);
+    } catch (e) {
+      lastErr = e;
+      console.error(`PageSpeed attempt ${attempt + 1} failed:`, e?.message || e);
+      if (!e?.retryable) break; // bad/unreachable URL — retrying won't help
     }
-    if (!response.ok) {
-      // Surface Google's actual reason (unreachable URL, rate limit, etc.)
-      // instead of a generic failure, so the merchant can act on it.
-      let detail = '';
-      try {
-        const errBody = await response.json();
-        detail = errBody?.error?.message || '';
-      } catch { /* non-JSON error body */ }
-      throw new Error(`PageSpeed API request failed (${response.status})${detail ? `: ${detail}` : ''}`);
-    }
-
-    const data = await response.json();
-    const lighthouseResult = data.lighthouseResult;
-
-    if (!lighthouseResult) {
-      throw new Error('No Lighthouse data in response');
-    }
-
-    const performanceScore = Math.round((lighthouseResult.categories.performance?.score || 0) * 100);
-    const audits = lighthouseResult.audits;
-
-    const lcpAudit = audits['largest-contentful-paint'];
-    const tbtAudit = audits['total-blocking-time'];
-    const clsAudit = audits['cumulative-layout-shift'];
-    const ttfbAudit = audits['server-response-time'];
-    const speedIndexAudit = audits['speed-index'];
-    const interactiveAudit = audits['interactive'];
-
-    return {
-      score: performanceScore,
-      lcp: lcpAudit?.numericValue ? parseFloat((lcpAudit.numericValue / 1000).toFixed(2)) : 0,
-      tbt: tbtAudit?.numericValue ? Math.round(tbtAudit.numericValue) : 0,
-      cls: clsAudit?.numericValue ? parseFloat(clsAudit.numericValue.toFixed(3)) : 0,
-      ttfb: ttfbAudit?.numericValue ? parseFloat((ttfbAudit.numericValue / 1000).toFixed(2)) : 0,
-      loadTime: interactiveAudit?.numericValue ? parseFloat((interactiveAudit.numericValue / 1000).toFixed(2)) : 0,
-      speedIndex: speedIndexAudit?.numericValue ? parseFloat((speedIndexAudit.numericValue / 1000).toFixed(2)) : 0,
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    console.error('PageSpeed test error:', error);
-    return null;
   }
+  console.error('PageSpeed test failed after retries:', lastErr?.message || lastErr);
+  return null;
 }
 
 /**
