@@ -353,7 +353,7 @@ export async function action({ request }) {
       const detail = error?.message ? ` (${error.message})` : '';
       return {
         success: false,
-        error: `Failed to run the PageSpeed test on ${pageUrl}${detail}. Common causes: the store/page is password-protected or unpublished (Google can't load it), the product page URL isn't public yet, or API rate limits. Make sure the page opens in an incognito window, then try again.`
+        error: `Google PageSpeed couldn't analyze this page right now${detail}. This is usually temporary (Google rate limits) or because the page isn't publicly reachable yet (an unpublished or password-protected storefront). Your measured optimization savings below are unaffected — please try the live test again in a moment.`
       };
     }
   }
@@ -492,7 +492,7 @@ export default function PageSpeedImpactReports() {
 
         {actionData?.error && (
           <Layout.Section>
-            <Banner title="Error" tone="critical">
+            <Banner title="Live test couldn't complete" tone="warning">
               {actionData.error}
             </Banner>
           </Layout.Section>
