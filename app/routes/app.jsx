@@ -1,14 +1,12 @@
 import { useEffect } from "react";
-import { Outlet, useLoaderData, useRouteError, useSubmit, useNavigation } from "react-router";
+import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import { authenticate, sessionStorage } from "../shopify.server";
 import {
-  getBillingState,
   getBillingStateCached,
   managedPricingUrl,
-  appBridgeRedirect,
 } from "../billing.server";
 import { entitled } from "../plans.server";
 import PricingTiers from "../components/PricingTiers";
@@ -26,6 +24,10 @@ export const loader = async ({ request }) => {
 
   let hasActivePlan = false;
   let features = { pageSpeed: false, altText: false };
+  // The pricing-wall CTA is a direct top-frame link to Shopify's managed-pricing
+  // page, so the URL must be available even when no plan is active (that's when
+  // the wall shows). Default to the fallback app handle; refined below.
+  let pricingUrl = managedPricingUrl(session.shop);
   try {
     // Subscription state gates the whole app. Cached per-shop (positive results
     // only) so paying merchants don't pay a Shopify roundtrip on every click;
@@ -37,6 +39,7 @@ export const loader = async ({ request }) => {
       pageSpeed: entitled(state.plan, "pageSpeed"),
       altText: entitled(state.plan, "altText"),
     };
+    pricingUrl = managedPricingUrl(session.shop, state.appHandle);
   } catch (e) {
     // Propagate redirect Responses (e.g. OAuth flow initiated by the library),
     // but treat 4xx Responses as an expired/revoked token — trigger re-auth
@@ -61,29 +64,12 @@ export const loader = async ({ request }) => {
     apiKey: process.env.SHOPIFY_API_KEY || "",
     hasActivePlan,
     features,
+    pricingUrl,
   };
 };
 
-export const action = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
-
-  // Managed pricing: send the merchant to Shopify's hosted plan-selection page.
-  const { appHandle } = await getBillingState(admin);
-  const url = managedPricingUrl(session.shop, appHandle);
-  console.log("[BILLING] managed pricing redirect:", url);
-  throw appBridgeRedirect(url);
-};
-
 export default function App() {
-  const { apiKey, hasActivePlan, needsReauth, shop, features } = useLoaderData();
-  const submit = useSubmit();
-  const navigation = useNavigation();
-  const isSubscribing = navigation.state === "submitting";
-
-  // Posting to the /app action throws a 401 + reauthorize header; App Bridge
-  // intercepts it and navigates the top frame to the managed pricing page,
-  // where the merchant picks the actual plan.
-  const handleSubscribe = () => submit({}, { method: "post", action: "/app" });
+  const { apiKey, hasActivePlan, needsReauth, shop, features, pricingUrl } = useLoaderData();
 
   // Expired token: break out of the Shopify iframe so OAuth runs in the top frame
   useEffect(() => {
@@ -113,7 +99,7 @@ export default function App() {
             <Outlet />
           </>
         ) : (
-          <PricingTiers onSubscribe={handleSubscribe} isLoading={isSubscribing} />
+          <PricingTiers pricingUrl={pricingUrl} />
         )}
       </PolarisAppProvider>
     </ShopifyAppProvider>

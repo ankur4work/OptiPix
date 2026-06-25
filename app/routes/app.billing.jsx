@@ -40,7 +40,7 @@ const FEATURE_LABELS = {
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
 
-  let state = { hasActivePlan: false, plan: null };
+  let state = { hasActivePlan: false, plan: null, appHandle: undefined };
   try {
     state = await getBillingState(admin, session.shop);
   } catch (e) {
@@ -60,6 +60,8 @@ export const loader = async ({ request }) => {
     monthlyImages: plan.monthlyImages,
     included,
     imagesUsed: usage.imagesUsed || 0,
+    // Direct top-frame link target for the Change/Choose-plan CTA.
+    pricingUrl: managedPricingUrl(session.shop, state.appHandle),
   };
 };
 
@@ -70,12 +72,6 @@ export const action = async ({ request }) => {
 
   const state = await getBillingState(admin);
   const pricingUrl = managedPricingUrl(session.shop, state.appHandle);
-
-  // Subscribe / change / upgrade → Shopify's hosted managed-pricing page (where
-  // all 4 plans live and the merchant picks/switches).
-  if (actionType === "subscribe" || actionType === "change") {
-    throw appBridgeRedirect(pricingUrl);
-  }
 
   // Cancel: try the in-app cancel mutation first; if managed pricing blocks it,
   // fall back to the hosted page to cancel manually.
@@ -95,7 +91,7 @@ export const action = async ({ request }) => {
 };
 
 export default function BillingPage() {
-  const { hasActivePlan, planName, tier, monthlyImages, included, imagesUsed } = useLoaderData();
+  const { hasActivePlan, planName, tier, monthlyImages, included, imagesUsed, pricingUrl } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -139,7 +135,7 @@ export default function BillingPage() {
                   </Text>
                 </BlockStack>
                 <InlineStack gap="300">
-                  <Button variant="primary" loading={isBusy} onClick={() => post("change")}>
+                  <Button variant="primary" url={pricingUrl} target="_top">
                     {hasActivePlan ? "Change plan" : "Choose a plan"}
                   </Button>
                   {hasActivePlan && (

@@ -1,39 +1,29 @@
-import { redirect, useSubmit, useNavigation, useRouteError } from "react-router";
+import { redirect, useLoaderData, useRouteError } from "react-router";
 import { authenticate } from "../shopify.server";
-import {
-  getBillingState,
-  managedPricingUrl,
-  appBridgeRedirect,
-} from "../billing.server";
+import { getBillingState, managedPricingUrl } from "../billing.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import PricingTiers from "../components/PricingTiers";
 
 export const loader = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  // Default to the fallback app handle so the CTA always has a target, even if
+  // the billing-state lookup below fails.
+  let pricingUrl = managedPricingUrl(session.shop);
   try {
     const { admin } = await authenticate.admin(request);
-    const { hasActivePlan } = await getBillingState(admin);
-    if (hasActivePlan) throw redirect("/app");
+    const state = await getBillingState(admin);
+    if (state.hasActivePlan) throw redirect("/app");
+    pricingUrl = managedPricingUrl(session.shop, state.appHandle);
   } catch (e) {
     if (e instanceof Response) throw e;
-    // auth or billing error — stay on pricing page
+    // auth or billing error — stay on pricing page with the fallback URL
   }
-  return null;
-};
-
-export const action = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
-  const { appHandle } = await getBillingState(admin);
-  throw appBridgeRedirect(managedPricingUrl(session.shop, appHandle));
+  return { pricingUrl };
 };
 
 export default function PricingPage() {
-  const submit = useSubmit();
-  const navigation = useNavigation();
-  const isLoading = navigation.state === "submitting";
-
-  const handleSubscribe = () => submit({}, { method: "post" });
-
-  return <PricingTiers onSubscribe={handleSubscribe} isLoading={isLoading} />;
+  const { pricingUrl } = useLoaderData();
+  return <PricingTiers pricingUrl={pricingUrl} />;
 }
 
 export function ErrorBoundary() {

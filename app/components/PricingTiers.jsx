@@ -1,16 +1,19 @@
 import { PLAN_TIERS } from "../planCatalog";
 
 // 4-tier pricing comparison used by both the standalone pricing page and the
-// in-app pricing wall. Presentational only: `onSubscribe()` is invoked when any
-// plan button is clicked (it routes the merchant to Shopify's hosted managed-
-// pricing page, where the actual price/cycle live and are picked). `isLoading`
-// disables the buttons while that redirect is in flight.
+// in-app pricing wall. Presentational only: every plan CTA is a real top-frame
+// link (`target="_top"`) to Shopify's hosted managed-pricing page, where the
+// actual price/cycle live and are picked. A direct anchor is used (rather than a
+// form POST + reauthorize-header redirect) because a user click is a reliable
+// user-activation that can navigate the top frame out of the embedded iframe —
+// the POST-based redirect intermittently failed during initial setup and looped
+// the merchant back to the app index.
 //
 // NOTE: we intentionally do NOT show prices here. Prices are owned by the
 // Partner Dashboard plans and can be changed there without a code deploy;
 // rendering them in-app would risk showing a stale amount. The merchant sees the
 // real price on Shopify's pricing page after clicking through.
-export default function PricingTiers({ onSubscribe, isLoading }) {
+export default function PricingTiers({ pricingUrl }) {
   return (
     <div style={s.page}>
       <p style={s.appLabel}>PIXELPERFECT</p>
@@ -25,18 +28,20 @@ export default function PricingTiers({ onSubscribe, isLoading }) {
             {tier.popular && <div style={s.popularBadge}>MOST POPULAR</div>}
             <p style={s.tierName}>{tier.name}</p>
             <p style={s.tierTagline}>{tier.tagline}</p>
-            <button
-              type="button"
-              onClick={onSubscribe}
-              disabled={isLoading}
+            <a
+              href={pricingUrl}
+              target="_top"
               style={{
                 ...(tier.popular ? s.ctaPrimary : s.ctaSecondary),
-                opacity: isLoading ? 0.7 : 1,
-                cursor: isLoading ? "not-allowed" : "pointer",
+                display: "block",
+                textAlign: "center",
+                textDecoration: "none",
+                boxSizing: "border-box",
+                cursor: "pointer",
               }}
             >
-              {isLoading ? "Redirecting…" : tier.price === 0 ? "Start free" : "Choose plan"}
-            </button>
+              {tier.price === 0 ? "Start free" : "Choose plan"}
+            </a>
             <div style={s.featureList}>
               {tier.features.map((f, i) => (
                 <div key={i} style={s.featureRow}>
