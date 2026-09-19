@@ -44,3 +44,17 @@ model ShopSettings {
   shop         String  @id
   autoOptimize Boolean @default(false)
 }
+
+// Measured byte size of a Shopify CDN image, keyed by its URL.
+//
+// The product list has to show a real "Original Size" per product, which meant a
+// HEAD request per image on every single page load — thousands of round trips
+// for a mid-size catalog. Shopify CDN urls carry a ?v=<version> that changes
+// whenever the file changes, so the url is a safe content key: a cached entry
+// can never describe different bytes than the ones it was measured from, and
+// stale rows are simply never read again.
+model ImageSize {
+  url       String   @id
+  bytes     Int
+  createdAt DateTime @default(now())
+}

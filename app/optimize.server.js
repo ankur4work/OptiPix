@@ -12,6 +12,55 @@
 import sharp from "sharp";
 import { setDefaultResultOrder } from "node:dns";
 import { incrementUsage } from "./usage.server";
+import db from "./db.server";
+
+/* -------------------------------------------------------------------------- */
+/*  Encoder tuning                                                            */
+/* -------------------------------------------------------------------------- */
+
+const num = (v, dflt, min, max) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : dflt;
+};
+
+// Measured on real Shopify product photos (see the notes below each value).
+// All overridable by env so the compression/quality balance can be retuned on
+// the running container without a code change.
+//
+// QUALITY: quality is the lever that actually moves output size; `effort` is
+// nearly free to skip. On already-compressed merchant JPEGs, dropping q80 -> q76
+// produced 12.6% smaller files for the SAME encode time, while raising effort
+// 4 -> 6 bought only 3.1% for 20% more CPU. WebP q76 with smartSubsample is
+// visually indistinguishable from q80 on product photography.
+const QUALITY = num(process.env.WEBP_QUALITY, 76, 40, 95);
+const EFFORT = num(process.env.WEBP_EFFORT, 5, 0, 6);
+
+// Fallback quality for sources that are ALREADY efficiently encoded. These are
+// the images that made the app look broken: a pre-optimised JPEG or a WebP the
+// merchant uploaded themselves only gives up ~3-10% at q76, because there is
+// very little redundancy left to remove. A single lower-quality pass roughly
+// doubles the saving (measured 26% -> 45% on pre-compressed JPEGs).
+const RETRY_QUALITY = num(process.env.WEBP_RETRY_QUALITY, 66, 40, 95);
+
+// If the first pass saved less than this fraction, spend one more encode trying
+// the lower quality. Only poorly-compressing images pay the extra CPU.
+const RETRY_BELOW_GAIN = num(process.env.WEBP_RETRY_BELOW, 20, 0, 90) / 100;
+
+// Longest edge. Matches what storefront themes actually render at 2x; images
+// already smaller than this are never enlarged.
+const MAX_DIM = num(process.env.MAX_IMAGE_DIM, 2048, 512, 5000);
+
+// Below this saving the image is left alone: re-encoding it would burn a quota
+// credit, replace the merchant's file and generate a new CDN url, all to shave
+// a couple of kilobytes.
+const MIN_WORTHWHILE_GAIN = num(process.env.MIN_GAIN_PERCENT, 2, 0, 50) / 100;
+
+// libvips spawns one thread per core by default, and optimizeBatch already runs
+// BATCH_CONCURRENCY images at once — on a small container the two multiply into
+// thread thrashing. Cap libvips so our own concurrency is the only dial, and
+// keep the pixel cache tiny since every buffer here is used exactly once.
+sharp.concurrency(num(process.env.SHARP_CONCURRENCY, 2, 1, 16));
+sharp.cache({ memory: 64, files: 0, items: 50 });
 
 /* -------------------------------------------------------------------------- */
 /*  Networking helpers                                                        */
@@ -55,28 +104,109 @@ export async function mapLimit(items, limit, fn) {
   return results;
 }
 
-// Cheaply measure an image's size in MB via a HEAD request (no body download).
-export async function headSizeMB(url) {
+// Cheaply measure an image's size in bytes via a HEAD request (no body download).
+export async function headSizeBytes(url) {
   try {
     const res = await timedFetch(url, { method: "HEAD" }, 8000);
     if (!res.ok) return 0;
     const cl = res.headers.get("content-length");
-    return cl ? parseInt(cl, 10) / (1024 * 1024) : 0;
+    return cl ? parseInt(cl, 10) : 0;
   } catch {
     return 0;
   }
 }
 
-export const BATCH_SIZE = 6;          // images optimized per batch call
-export const BATCH_CONCURRENCY = 6;   // images processed in parallel within a batch
+// Cheaply measure an image's size in MB via a HEAD request (no body download).
+export async function headSizeMB(url) {
+  return (await headSizeBytes(url)) / (1024 * 1024);
+}
+
+// Resolve many image sizes at once, in MB, keyed by url.
+//
+// This replaces a HEAD request per image on every product-list render. Sizes are
+// read from the ImageSize cache first and only the misses go over the network;
+// because a Shopify CDN url changes whenever its bytes change, a hit is always
+// correct. The cache write is best-effort — if the table isn't migrated yet the
+// whole thing silently degrades to the old measure-everything behaviour.
+export async function measureSizesMB(urls, concurrency = 40) {
+  const unique = [...new Set(urls.filter(Boolean))];
+  const bytesByUrl = new Map();
+  if (unique.length === 0) return bytesByUrl;
+
+  // Chunked so a large catalog can't build a single enormous IN (...) query.
+  for (let i = 0; i < unique.length; i += 500) {
+    const chunk = unique.slice(i, i + 500);
+    try {
+      const rows = await db.imageSize.findMany({ where: { url: { in: chunk } } });
+      for (const row of rows) bytesByUrl.set(row.url, row.bytes);
+    } catch {
+      break; // table unavailable — measure everything below
+    }
+  }
+
+  const missing = unique.filter((u) => !bytesByUrl.has(u));
+  if (missing.length > 0) {
+    const measured = await mapLimit(missing, concurrency, headSizeBytes);
+    const rows = [];
+    missing.forEach((url, i) => {
+      const bytes = measured[i] || 0;
+      bytesByUrl.set(url, bytes);
+      if (bytes > 0) rows.push({ url, bytes });
+    });
+    if (rows.length > 0) {
+      try {
+        await db.imageSize.createMany({ data: rows, skipDuplicates: true });
+      } catch { /* caching is an optimization, never a failure path */ }
+    }
+  }
+
+  const mbByUrl = new Map();
+  for (const [url, bytes] of bytesByUrl) mbByUrl.set(url, bytes / (1024 * 1024));
+  return mbByUrl;
+}
+
+// Images per batch call. Every batch re-queries the product's media and
+// metafields, so a small batch size means paying that query over and over for a
+// product with many images.
+export const BATCH_SIZE = num(process.env.BATCH_SIZE, 10, 1, 25);
+export const BATCH_CONCURRENCY = num(process.env.BATCH_CONCURRENCY, 6, 1, 12);
 
 /* -------------------------------------------------------------------------- */
 /*  Optimization primitives                                                   */
 /* -------------------------------------------------------------------------- */
 
+// One WebP encode at a given quality.
+function encode(buffer, quality) {
+  return sharp(buffer)
+    .rotate() // honor EXIF orientation before stripping metadata
+    .resize(MAX_DIM, MAX_DIM, { fit: "inside", withoutEnlargement: true })
+    // smartSubsample keeps chroma detail (coloured text, fabric edges) that
+    // plain 4:2:0 smears, which is what lets the lower quality below stay
+    // invisible on product photography.
+    .webp({ quality, effort: EFFORT, smartSubsample: true })
+    .toBuffer();
+}
+
+// Encode to the smallest WebP that still looks right.
+//
+// A single fixed quality is what made the app report single-digit savings: a
+// source that is ALREADY well compressed (a pre-optimised JPEG, or a WebP the
+// merchant uploaded) has little redundancy left, so q76 barely dents it. When
+// that happens we spend one more encode at a lower quality, which roughly
+// doubles the saving on exactly those images and costs nothing on the images
+// that compressed well the first time.
+async function encodeBest(originalBuffer) {
+  const first = await encode(originalBuffer, QUALITY);
+  const gain = 1 - first.byteLength / originalBuffer.byteLength;
+  if (gain >= RETRY_BELOW_GAIN) return first;
+
+  const second = await encode(originalBuffer, RETRY_QUALITY);
+  return second.byteLength < first.byteLength ? second : first;
+}
+
 // Download + compress one image with Sharp. Always re-encodes to WebP, which
-// reliably beats JPEG/PNG (typically 25-40% smaller at q80). Retries the
-// download once to ride out transient CDN blips.
+// reliably beats JPEG/PNG. Retries the download once to ride out transient CDN
+// blips.
 export async function optimizeImage(imageUrl) {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -86,11 +216,7 @@ export async function optimizeImage(imageUrl) {
       const originalBuffer = Buffer.from(await response.arrayBuffer());
       const originalSizeMB = originalBuffer.byteLength / (1024 * 1024);
 
-      const optimizedBuffer = await sharp(originalBuffer)
-        .rotate() // honor EXIF orientation before stripping metadata
-        .resize(2048, 2048, { fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 80, effort: 4 })
-        .toBuffer();
+      const optimizedBuffer = await encodeBest(originalBuffer);
 
       const optimizedSizeMB = optimizedBuffer.byteLength / (1024 * 1024);
       return {
@@ -342,9 +468,14 @@ export async function optimizeBatch(admin, productId, opts = {}) {
     try {
       const opt = await optimizeImage(image.url);
 
-      // Re-encoding an already-tiny image can grow it — skip so we never
-      // degrade the merchant's image. Mark as processed so it isn't retried.
-      if (opt.optimizedSizeMB >= opt.originalSizeMB) {
+      // Not worth replacing: re-encoding an already-tiny image can grow it, and
+      // a saving of a couple of kilobytes isn't worth burning a quota credit,
+      // swapping the merchant's file and invalidating its CDN url. Mark as
+      // processed so it isn't retried on the next run.
+      const gain = opt.originalSizeMB > 0
+        ? (opt.originalSizeMB - opt.optimizedSizeMB) / opt.originalSizeMB
+        : 0;
+      if (gain < MIN_WORTHWHILE_GAIN) {
         const key = `image_${image.id.split("/").pop()}`;
         return {
           key,

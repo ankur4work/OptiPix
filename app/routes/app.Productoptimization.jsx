@@ -5,7 +5,7 @@ import { getBillingStateCached } from '../billing.server';
 import { getUsage, getRemaining } from '../usage.server';
 import { entitled } from '../plans.server';
 import db from '../db.server';
-import { mapLimit, headSizeMB, optimizeBatch } from '../optimize.server';
+import { measureSizesMB, optimizeBatch } from '../optimize.server';
 import {
   Page,
   Layout,
@@ -62,8 +62,9 @@ async function getAllProducts(admin) {
   let cursor = null;
   while (hasNextPage) {
     const data = await fetchAllProducts(admin, cursor);
-    const products = data.data.products.edges.map(edge => edge.node);
-    allProducts = [...allProducts, ...products];
+    // push rather than rebuild: spreading the accumulator each page re-copies
+    // every product already fetched, which is quadratic on a large catalog.
+    for (const edge of data.data.products.edges) allProducts.push(edge.node);
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
   }
@@ -120,8 +121,9 @@ export async function loader({ request }) {
 
     // Build a flat list of images we need to measure (only for products that
     // have never been optimized — optimized products carry totals in their
-    // summary metafield). Measured with bounded concurrency + IPv4 so the page
-    // loads in a few seconds instead of stalling on per-image connect timeouts.
+    // summary metafield). measureSizesMB serves these from the ImageSize cache
+    // and only goes to the network for urls it has never seen, so this costs
+    // thousands of HEAD requests exactly once rather than on every render.
     const measureTasks = [];
     for (const product of products) {
       if (parseSummary(product)) continue;
@@ -129,11 +131,11 @@ export async function loader({ request }) {
         measureTasks.push({ productId: product.id, url: edge.node.url });
       }
     }
-    const measuredSizes = await mapLimit(measureTasks, 24, t => headSizeMB(t.url));
+    const sizeByUrl = await measureSizesMB(measureTasks.map(t => t.url));
     const measuredByProduct = {};
-    measureTasks.forEach((t, i) => {
-      measuredByProduct[t.productId] = (measuredByProduct[t.productId] || 0) + (measuredSizes[i] || 0);
-    });
+    for (const t of measureTasks) {
+      measuredByProduct[t.productId] = (measuredByProduct[t.productId] || 0) + (sizeByUrl.get(t.url) || 0);
+    }
 
     const processedProducts = products.map((product) => {
       const images = product.images.edges.map(e => e.node);

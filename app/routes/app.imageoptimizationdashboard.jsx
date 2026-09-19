@@ -100,8 +100,9 @@ async function getAllProducts(admin) {
 
   while (hasNextPage) {
     const data = await fetchAllProducts(admin, cursor);
-    const products = data.data.products.edges.map(edge => edge.node);
-    allProducts = [...allProducts, ...products];
+    // push rather than rebuild: spreading the accumulator each page re-copies
+    // every product already fetched, which is quadratic on a large catalog.
+    for (const edge of data.data.products.edges) allProducts.push(edge.node);
 
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
