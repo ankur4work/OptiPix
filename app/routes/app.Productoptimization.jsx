@@ -337,12 +337,16 @@ export async function action({ request }) {
 /**
  * How many images of the same product the browser optimizes at once.
  *
- * The server used to own this (BATCH_CONCURRENCY, 6) because it processed a
- * whole batch per request. With one image per request the browser owns it, and
- * it's kept lower: each image costs several Shopify mutations, so a wider pool
- * just trades our queue for the API's own throttle.
+ * This MUST match what the server used to do (BATCH_CONCURRENCY, 6). Moving
+ * parallelism from the server to the browser and setting it to 3 halved
+ * throughput: measured on a 16-image product, 119s of server time became ~40s
+ * of wall clock instead of ~20s.
+ *
+ * Six is not a guess — it is the same number of concurrent images, against the
+ * same shop's rate limit, that the batch path ran for months. The only addition
+ * per image is one cheap context query; the expensive mutations are unchanged.
  */
-const IMAGE_CONCURRENCY = 3;
+const IMAGE_CONCURRENCY = 6;
 
 /** Run `fn` over `items` with at most `limit` in flight. Mirrors mapLimit. */
 async function mapLimitClient(items, limit, fn, shouldStop) {
@@ -393,6 +397,15 @@ export default function ProductOptimization() {
 
   // Track images optimized this session so the usage meter moves without a reload.
   const [sessionImages, setSessionImages] = useState(0);
+
+  // sessionImages exists only to move the meter while a run is in progress,
+  // before the loader has caught up. The moment fresh loader data arrives it
+  // ALREADY includes those images, so the session delta has to be dropped —
+  // otherwise both are added and the meter reads exactly double (16 optimized
+  // images showed as 32/100).
+  useEffect(() => {
+    setSessionImages(0);
+  }, [usage]);
 
   /**
    * A run, driven one IMAGE per request from the browser.
