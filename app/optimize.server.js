@@ -11,7 +11,7 @@
 // with images still pending.
 import sharp from "sharp";
 import { setDefaultResultOrder } from "node:dns";
-import { incrementUsage } from "./usage.server";
+import { incrementUsage, reserveImages, refundImages } from "./usage.server";
 import db from "./db.server";
 
 /* -------------------------------------------------------------------------- */
@@ -571,4 +571,301 @@ export async function optimizeBatch(admin, productId, opts = {}) {
       ? `Optimized "${product.title}" — ${processed}/${total} images`
       : `Optimizing "${product.title}" — ${processed}/${total} images`,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Per-image — one image per call, so the browser can show real progress     */
+/* -------------------------------------------------------------------------- */
+
+// optimizeBatch above does up to BATCH_SIZE images per call, which means a
+// product with fewer images than that is a SINGLE request: the page could only
+// jump from 0/8 to 8/8 with nothing in between. These three functions move the
+// unit of work down to one image, so every response is a progress event and the
+// browser decides how many run at once.
+//
+//   listProductImages  -> what to work through, in the merchant's order
+//   optimizeOneImage   -> one image, replaced, recorded and metered
+//   finalizeProduct    -> rewrite the summary, restore the image order
+
+const imageKey = (mediaId) => `image_${String(mediaId).split("/").pop()}`;
+
+// Parse the per-image records on a product, keyed by short media id.
+function parseRecords(product) {
+  const byShortId = {};
+  for (const edge of product?.metafields?.edges || []) {
+    const key = edge.node.key;
+    if (!key.startsWith("image_")) continue;
+    try {
+      byShortId[key.slice("image_".length)] = JSON.parse(edge.node.value);
+    } catch { /* a malformed record just means no history */ }
+  }
+  return byShortId;
+}
+
+// The images on a product, in order, each flagged with whether it already has
+// an optimization record. Keeping the `done` flag preserves the resumable
+// behaviour optimizeBatch had: a re-run skips what is already processed.
+export async function listProductImages(admin, productId) {
+  const response = await admin.graphql(
+    `#graphql
+      query ProductImagesForRun($id: ID!) {
+        product(id: $id) {
+          id
+          title
+          media(first: 250) {
+            edges { node { ... on MediaImage { id image { url altText } } } }
+          }
+          metafields(first: 250, namespace: "image_optimization") {
+            edges { node { key value } }
+          }
+        }
+      }`,
+    { variables: { id: productId } }
+  );
+  const data = await response.json();
+  const product = data.data?.product;
+  if (!product) return null;
+
+  const records = parseRecords(product);
+  const images = (product.media?.edges || [])
+    .map(e => e.node)
+    .filter(n => n && n.image && n.image.url)
+    .map(n => ({
+      id: n.id,
+      url: n.image.url,
+      altText: n.image.altText || "",
+      done: !!records[n.id.split("/").pop()],
+    }));
+
+  return { id: product.id, title: product.title, images };
+}
+
+// Optimize exactly one image and replace it on the product.
+//
+// Returns a result object rather than throwing, so one bad image never takes
+// down the rest of a run.
+export async function optimizeOneImage({ admin, productId, imageId, shop, plan, genAlt = true }) {
+  // One query for everything this image needs. The URL and alt text come from
+  // Shopify, never from the browser, and the previous record carries the TRUE
+  // original size forward so re-optimizing does not report ~0 saving.
+  const key = imageKey(imageId);
+  const response = await admin.graphql(
+    `#graphql
+      query OneImageContext($imageId: ID!, $productId: ID!, $key: String!) {
+        node(id: $imageId) {
+          ... on MediaImage { id image { url altText } }
+        }
+        product(id: $productId) {
+          id
+          title
+          metafield(namespace: "image_optimization", key: $key) { value }
+        }
+      }`,
+    { variables: { imageId, productId, key } }
+  );
+  const data = await response.json();
+  const node = data.data?.node;
+  const product = data.data?.product;
+
+  if (!node?.image?.url || !product) {
+    return { success: false, imageId, error: "That image is no longer on the product." };
+  }
+
+  const imageUrl = node.image.url;
+  const currentAlt = node.image.altText || "";
+
+  let previousOriginalMB = 0;
+  if (product.metafield?.value) {
+    try {
+      previousOriginalMB = Number(JSON.parse(product.metafield.value).originalSizeMB) || 0;
+    } catch { /* unreadable record - nothing to carry forward */ }
+  }
+
+  const reserved = await reserveImages(shop, plan, 1);
+  if (!reserved.allowed) {
+    return {
+      success: false,
+      imageId,
+      // Flagged so the browser stops the run instead of asking for every
+      // remaining image and collecting the same refusal each time.
+      quotaExceeded: true,
+      error: "Monthly image quota reached.",
+    };
+  }
+
+  let spent = false;
+
+  try {
+    const opt = await optimizeImage(imageUrl);
+    const trueOriginalMB = Math.max(previousOriginalMB, opt.originalSizeMB);
+
+    // Not worth replacing: re-encoding an already-tiny image can grow it, and a
+    // couple of kilobytes is not worth burning a credit, swapping the merchant
+    // file and invalidating its CDN url. Recorded so it is not retried.
+    const gain = opt.originalSizeMB > 0
+      ? (opt.originalSizeMB - opt.optimizedSizeMB) / opt.originalSizeMB
+      : 0;
+
+    if (gain < MIN_WORTHWHILE_GAIN) {
+      await writeImageRecord(admin, productId, key, {
+        status: "skipped",
+        originalSizeMB: trueOriginalMB,
+        optimizedSizeMB: opt.originalSizeMB,
+        compressionRate: 0,
+        optimizedAt: new Date().toISOString(),
+      });
+      return {
+        success: true,
+        imageId,
+        newImageId: imageId,
+        skipped: true,
+        originalSizeMB: trueOriginalMB,
+        optimizedSizeMB: opt.originalSizeMB,
+        compressionRate: 0,
+      };
+    }
+
+    // Auto alt text is a paid entitlement; genAlt=false keeps the existing alt.
+    let altText = currentAlt;
+    if (genAlt && (!altText || altText.length < 10)) {
+      altText = await generateAIAltText(imageUrl, product.title);
+    }
+
+    const newImageId = await uploadAndReplaceImage(
+      admin, productId, imageId, opt.optimizedBuffer, altText
+    );
+
+    // The optimized copy is attached, so the credit is genuinely spent from here
+    // even if the bookkeeping below misbehaves.
+    spent = true;
+
+    const compressionRate = trueOriginalMB > 0
+      ? Math.round(((trueOriginalMB - opt.optimizedSizeMB) / trueOriginalMB) * 100)
+      : opt.compressionRate;
+
+    await writeImageRecord(admin, productId, imageKey(newImageId), {
+      status: "optimized",
+      originalSizeMB: trueOriginalMB,
+      optimizedSizeMB: opt.optimizedSizeMB,
+      compressionRate,
+      altText,
+      optimizedAt: new Date().toISOString(),
+      originalImageId: imageId,
+      newImageId,
+    });
+
+    return {
+      success: true,
+      imageId,
+      newImageId,
+      skipped: false,
+      originalSizeMB: trueOriginalMB,
+      optimizedSizeMB: opt.optimizedSizeMB,
+      savedMB: Math.max(trueOriginalMB - opt.optimizedSizeMB, 0),
+      compressionRate,
+      altText,
+    };
+  } catch (err) {
+    const detail = err?.graphQLErrors?.[0]?.message || err?.message || "optimize failed";
+    console.error(`[OPTIMIZE] ${imageId}:`, detail);
+    return { success: false, imageId, error: detail };
+  } finally {
+    // Nothing replaced means nothing consumed - a skipped or failed image is
+    // free, which is what keeps re-running the optimizer safe.
+    if (!spent) await refundImages(shop, 1);
+  }
+}
+
+async function writeImageRecord(admin, productId, key, record) {
+  await admin.graphql(
+    `#graphql
+      mutation SetImageRecord($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) { userErrors { field message } }
+      }`,
+    {
+      variables: {
+        metafields: [{
+          ownerId: productId,
+          namespace: "image_optimization",
+          key,
+          type: "json",
+          value: JSON.stringify(record),
+        }],
+      },
+    }
+  );
+}
+
+// Close out a product: rewrite the summary from what is actually on it now, and
+// put the image order back.
+//
+// The order matters and was already wrong. Replacing an image appends the copy
+// at the end and deletes the original, and optimizeBatch ran six of those at
+// once - so images finished in arbitrary order and the merchant sequence (and
+// featured image) got shuffled. `desiredOrder` is the order before the run.
+export async function finalizeProduct(admin, productId, desiredOrder = []) {
+  const response = await admin.graphql(
+    `#graphql
+      query ProductRunState($id: ID!) {
+        product(id: $id) {
+          id
+          media(first: 250) {
+            edges { node { ... on MediaImage { id } } }
+          }
+          metafields(first: 250, namespace: "image_optimization") {
+            edges { node { key value } }
+          }
+        }
+      }`,
+    { variables: { id: productId } }
+  );
+  const data = await response.json();
+  const product = data.data?.product;
+  if (!product) return null;
+
+  const currentIds = (product.media?.edges || [])
+    .map(e => e.node)
+    .filter(n => n && n.id)
+    .map(n => n.id);
+
+  // Only records for an image STILL on the product count. Records left behind by
+  // replaced images would otherwise be counted again, inflating both the
+  // processed count and the reported savings.
+  const records = parseRecords(product);
+  const live = currentIds
+    .map(id => records[id.split("/").pop()])
+    .filter(Boolean);
+
+  const totals = await writeSummary(admin, productId, currentIds.length, live);
+
+  // Unknown ids make the mutation fail outright, so only ids still present are
+  // moved, and anything the caller did not mention is appended rather than lost.
+  const wanted = desiredOrder.filter(id => currentIds.includes(id));
+  const ordered = [...wanted, ...currentIds.filter(id => !wanted.includes(id))];
+  const changed = ordered.some((id, i) => id !== currentIds[i]);
+
+  if (changed && ordered.length > 1) {
+    try {
+      await admin.graphql(
+        `#graphql
+          mutation ReorderMedia($id: ID!, $moves: [MoveInput!]!) {
+            productReorderMedia(id: $id, moves: $moves) {
+              job { id }
+              mediaUserErrors { field message }
+            }
+          }`,
+        {
+          variables: {
+            id: productId,
+            moves: ordered.map((id, i) => ({ id, newPosition: String(i) })),
+          },
+        }
+      );
+    } catch (err) {
+      // Cosmetic. A failed reorder must not fail a successful optimization.
+      console.error("[OPTIMIZE] reorder failed (non-fatal):", err?.message || err);
+    }
+  }
+
+  return { ...totals, totalImages: currentIds.length };
 }
