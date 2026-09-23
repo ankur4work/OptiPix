@@ -53,8 +53,58 @@ async function fetchAllProducts(admin, cursor = null) {
       }
     }
   `;
-  const response = await admin.graphql(query, { variables: { cursor } });
-  return await response.json();
+  // Bound and retry this request.
+  //
+  // Two separate failures were killing the page. A `fetch failed` means no HTTP
+  // response arrived at all (DNS, TCP, TLS, dropped socket) — not a Shopify
+  // error, which comes back as a 200 with an errors array. And worse, the call
+  // could hang with no result: eleven .data requests were logged with no status
+  // and no duration, so the browser never navigated and "Open optimizer" looked
+  // like a dead button.
+  //
+  // The timeout does NOT cancel the underlying request — admin.graphql takes no
+  // signal, so the abandoned fetch lives until it settles on its own. That is
+  // worth it: a leaked socket is cheaper than a page that never renders.
+  const ATTEMPTS = 2;
+  const TIMEOUT_MS = 15000;
+  let lastError;
+
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    let timer;
+    try {
+      const response = await Promise.race([
+        admin.graphql(query, { variables: { cursor } }),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Shopify did not respond within ${TIMEOUT_MS}ms`)),
+            TIMEOUT_MS
+          );
+        }),
+      ]);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      // `cause` is where undici puts the actual reason (ENOTFOUND,
+      // UND_ERR_CONNECT_TIMEOUT, ECONNRESET…). Logging only error.message threw
+      // that away and left "fetch failed" as the entire diagnosis.
+      console.error(
+        '[LOADER] products fetch attempt %d/%d failed: %s | cause: %s %s',
+        attempt,
+        ATTEMPTS,
+        error?.message,
+        error?.cause?.code || '',
+        error?.cause?.message || ''
+      );
+      if (attempt < ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    } finally {
+      // Otherwise the losing timer keeps the event loop awake for its full
+      // duration on every successful request.
+      clearTimeout(timer);
+    }
+  }
+  throw lastError;
 }
 
 async function getAllProducts(admin) {
@@ -63,6 +113,16 @@ async function getAllProducts(admin) {
   let cursor = null;
   while (hasNextPage) {
     const data = await fetchAllProducts(admin, cursor);
+
+    // A Shopify-side rejection (throttling, MAX_COST_EXCEEDED, a bad token)
+    // arrives as a 200 with an errors array and no data. Reading
+    // data.data.products straight away turned that into "Cannot read properties
+    // of undefined", which says nothing about what Shopify actually refused.
+    if (!data?.data?.products) {
+      const detail = JSON.stringify(data?.errors || data).slice(0, 300);
+      throw new Error('Shopify returned no product data: ' + detail);
+    }
+
     // push rather than rebuild: spreading the accumulator each page re-copies
     // every product already fetched, which is quadratic on a large catalog.
     for (const edge of data.data.products.edges) allProducts.push(edge.node);
@@ -201,7 +261,12 @@ export async function loader({ request }) {
       error: null,
     };
   } catch (error) {
-    console.error('Error loading products:', error);
+    console.error(
+      '[LOADER] Error loading products: %s | cause: %s %s',
+      error?.message,
+      error?.cause?.code || '',
+      error?.cause?.message || ''
+    );
     return {
       products: [],
       filter,
