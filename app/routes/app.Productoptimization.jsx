@@ -5,7 +5,7 @@ import { getBillingStateCached } from '../billing.server';
 import { getUsage, getRemaining } from '../usage.server';
 import { entitled } from '../plans.server';
 import db from '../db.server';
-import { measureSizesMB, optimizeBatch } from '../optimize.server';
+import { optimizeBatch } from '../optimize.server';
 import {
   Page,
   Layout,
@@ -27,128 +27,7 @@ import {
 } from '@shopify/polaris';
 
 /* -------------------------------------------------------------------------- */
-/*  Product fetching (loader only)                                            */
-/* -------------------------------------------------------------------------- */
-
-async function fetchAllProducts(admin, cursor = null) {
-  const query = `#graphql
-    query GetProductsWithImages($cursor: String) {
-      products(first: 50, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        edges {
-          node {
-            id
-            title
-            handle
-            status
-            featuredImage { id url altText width height }
-            images(first: 250) {
-              edges { node { id url altText width height } }
-            }
-            metafields(first: 250, namespace: "image_optimization") {
-              edges { node { key value } }
-            }
-          }
-        }
-      }
-    }
-  `;
-  // Bound and retry this request.
-  //
-  // Two separate failures were killing the page. A `fetch failed` means no HTTP
-  // response arrived at all (DNS, TCP, TLS, dropped socket) — not a Shopify
-  // error, which comes back as a 200 with an errors array. And worse, the call
-  // could hang with no result: eleven .data requests were logged with no status
-  // and no duration, so the browser never navigated and "Open optimizer" looked
-  // like a dead button.
-  //
-  // The timeout does NOT cancel the underlying request — admin.graphql takes no
-  // signal, so the abandoned fetch lives until it settles on its own. That is
-  // worth it: a leaked socket is cheaper than a page that never renders.
-  const ATTEMPTS = 2;
-  const TIMEOUT_MS = 15000;
-  let lastError;
-
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    let timer;
-    try {
-      const response = await Promise.race([
-        admin.graphql(query, { variables: { cursor } }),
-        new Promise((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`Shopify did not respond within ${TIMEOUT_MS}ms`)),
-            TIMEOUT_MS
-          );
-        }),
-      ]);
-      return await response.json();
-    } catch (error) {
-      lastError = error;
-      // `cause` is where undici puts the actual reason (ENOTFOUND,
-      // UND_ERR_CONNECT_TIMEOUT, ECONNRESET…). Logging only error.message threw
-      // that away and left "fetch failed" as the entire diagnosis.
-      console.error(
-        '[LOADER] products fetch attempt %d/%d failed: %s | cause: %s %s',
-        attempt,
-        ATTEMPTS,
-        error?.message,
-        error?.cause?.code || '',
-        error?.cause?.message || ''
-      );
-      if (attempt < ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    } finally {
-      // Otherwise the losing timer keeps the event loop awake for its full
-      // duration on every successful request.
-      clearTimeout(timer);
-    }
-  }
-  throw lastError;
-}
-
-async function getAllProducts(admin) {
-  let allProducts = [];
-  let hasNextPage = true;
-  let cursor = null;
-  while (hasNextPage) {
-    const data = await fetchAllProducts(admin, cursor);
-
-    // A Shopify-side rejection (throttling, MAX_COST_EXCEEDED, a bad token)
-    // arrives as a 200 with an errors array and no data. Reading
-    // data.data.products straight away turned that into "Cannot read properties
-    // of undefined", which says nothing about what Shopify actually refused.
-    if (!data?.data?.products) {
-      const detail = JSON.stringify(data?.errors || data).slice(0, 300);
-      throw new Error('Shopify returned no product data: ' + detail);
-    }
-
-    // push rather than rebuild: spreading the accumulator each page re-copies
-    // every product already fetched, which is quadratic on a large catalog.
-    for (const edge of data.data.products.edges) allProducts.push(edge.node);
-    hasNextPage = data.data.products.pageInfo.hasNextPage;
-    cursor = data.data.products.pageInfo.endCursor;
-  }
-  return allProducts;
-}
-
-// Parse the optimization_summary metafield (totals written by the action).
-function parseSummary(product) {
-  const mf = product.metafields.edges.find(e => e.node.key === 'optimization_summary');
-  if (!mf) return null;
-  try {
-    return JSON.parse(mf.node.value);
-  } catch {
-    return null;
-  }
-}
-
-function countProcessed(product) {
-  return product.metafields.edges.filter(e => e.node.key.startsWith('image_')).length;
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Loader                                                                    */
+/*  Loader — cheap data only                                                  */
 /* -------------------------------------------------------------------------- */
 
 export async function loader({ request }) {
@@ -157,127 +36,41 @@ export async function loader({ request }) {
   const filter = url.searchParams.get('filter') || 'all';
   const sortBy = url.searchParams.get('sortBy') || 'score_asc';
 
-  // Plan, usage and per-shop settings drive the quota meter + auto-optimize UI.
-  let plan = null;
-  try {
-    const state = await getBillingStateCached(admin, session.shop);
-    plan = state.plan;
-  } catch { /* fall through to Free defaults below */ }
-  let usage = { period: '', imagesUsed: 0 };
-  let autoOptimize = false;
-  try {
-    usage = await getUsage(session.shop);
-    const settings = await db.shopSettings.findUnique({ where: { shop: session.shop } });
-    autoOptimize = settings?.autoOptimize ?? false;
-  } catch { /* usage/settings tables not ready yet — default to zero/off */ }
-  const planInfo = {
-    tier: plan?.tier || 'free',
-    name: plan?.name || 'Free',
-    monthlyImages: plan?.monthlyImages ?? 100,
-    autoOptimizeAllowed: entitled(plan, 'autoOptimize'),
+  // Everything in here has to be fast, because the browser cannot finish the
+  // navigation until this returns — which is exactly why clicking into the
+  // optimizer took 4-10+ seconds while the product catalog was built here. The
+  // catalog moved to /api/catalog (app/catalog.server.js) and is requested once
+  // this page has already painted.
+  //
+  // The two remaining reads are independent, so they run concurrently instead of
+  // one waiting on the other: billing is a cached Shopify read, usage and
+  // settings are local DB.
+  const [planResult, shopResult] = await Promise.allSettled([
+    getBillingStateCached(admin, session.shop),
+    Promise.all([
+      getUsage(session.shop),
+      db.shopSettings.findUnique({ where: { shop: session.shop } }),
+    ]),
+  ]);
+
+  const plan = planResult.status === 'fulfilled' ? planResult.value.plan : null;
+  // usage/settings tables not ready yet — default to zero/off.
+  const [usage, settings] = shopResult.status === 'fulfilled'
+    ? shopResult.value
+    : [{ period: '', imagesUsed: 0 }, null];
+
+  return {
+    filter,
+    sortBy,
+    usage,
+    autoOptimize: settings?.autoOptimize ?? false,
+    plan: {
+      tier: plan?.tier || 'free',
+      name: plan?.name || 'Free',
+      monthlyImages: plan?.monthlyImages ?? 100,
+      autoOptimizeAllowed: entitled(plan, 'autoOptimize'),
+    },
   };
-
-  try {
-    const products = await getAllProducts(admin);
-
-    // Build a flat list of images we need to measure (only for products that
-    // have never been optimized — optimized products carry totals in their
-    // summary metafield). measureSizesMB serves these from the ImageSize cache
-    // and only goes to the network for urls it has never seen, so this costs
-    // thousands of HEAD requests exactly once rather than on every render.
-    const measureTasks = [];
-    for (const product of products) {
-      if (parseSummary(product)) continue;
-      for (const edge of product.images.edges) {
-        measureTasks.push({ productId: product.id, url: edge.node.url });
-      }
-    }
-    const sizeByUrl = await measureSizesMB(measureTasks.map(t => t.url));
-    const measuredByProduct = {};
-    for (const t of measureTasks) {
-      measuredByProduct[t.productId] = (measuredByProduct[t.productId] || 0) + (sizeByUrl.get(t.url) || 0);
-    }
-
-    const processedProducts = products.map((product) => {
-      const images = product.images.edges.map(e => e.node);
-      const imageCount = images.length;
-      const imagesWithAlt = images.filter(img => img.altText && img.altText.length > 10).length;
-
-      const summary = parseSummary(product);
-      let processed = summary ? (summary.optimizedImages || 0) : countProcessed(product);
-      processed = Math.min(processed, imageCount);
-
-      let totalOriginalSize;
-      let totalOptimizedSize;
-      if (summary) {
-        totalOriginalSize = summary.totalOriginalSizeMB || 0;
-        totalOptimizedSize = summary.totalOptimizedSizeMB || 0;
-      } else {
-        totalOriginalSize = measuredByProduct[product.id] || 0;
-        totalOptimizedSize = totalOriginalSize; // nothing saved yet
-      }
-
-      const score = imageCount > 0 ? Math.round((processed / imageCount) * 100) : 0;
-      const sizeSavedMB = Math.max(0, totalOriginalSize - totalOptimizedSize);
-      const compressionRate = totalOriginalSize > 0
-        ? Math.max(0, Math.round((sizeSavedMB / totalOriginalSize) * 100))
-        : 0;
-
-      return {
-        id: product.id,
-        title: product.title,
-        handle: product.handle,
-        status: product.status,
-        imageCount,
-        imagesWithAlt,
-        optimizedImages: processed,
-        score,
-        totalOriginalSizeMB: totalOriginalSize,
-        totalOptimizedSizeMB: totalOptimizedSize,
-        sizeSavedMB,
-        compressionRate,
-        featuredImageUrl: product.featuredImage?.url || images[0]?.url,
-        needsOptimization: score < 100,
-      };
-    });
-
-    // Return ALL products; filtering/sorting happens instantly on the client
-    // from this list, so changing a filter never re-runs this (heavy) loader.
-    return {
-      products: processedProducts,
-      filter,
-      sortBy,
-      plan: planInfo,
-      usage,
-      autoOptimize,
-      stats: {
-        total: processedProducts.length,
-        needsOptimization: processedProducts.filter(p => p.needsOptimization).length,
-        optimized: processedProducts.filter(p => !p.needsOptimization).length,
-        totalImages: processedProducts.reduce((s, p) => s + p.imageCount, 0),
-        totalSizeMB: processedProducts.reduce((s, p) => s + p.totalOriginalSizeMB, 0),
-        potentialSavingsMB: processedProducts.reduce((s, p) => s + p.sizeSavedMB, 0),
-      },
-      error: null,
-    };
-  } catch (error) {
-    console.error(
-      '[LOADER] Error loading products: %s | cause: %s %s',
-      error?.message,
-      error?.cause?.code || '',
-      error?.cause?.message || ''
-    );
-    return {
-      products: [],
-      filter,
-      sortBy,
-      plan: planInfo,
-      usage,
-      autoOptimize,
-      stats: { total: 0, needsOptimization: 0, optimized: 0, totalImages: 0, totalSizeMB: 0, potentialSavingsMB: 0 },
-      error: 'Failed to load products',
-    };
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -375,9 +168,20 @@ const formatBytes = (mb) => {
   return `0 KB`;
 };
 
+// Shown until /api/catalog answers. Declared here rather than imported from
+// catalog.server.js so no server module is referenced from client code.
+const EMPTY_STATS = {
+  total: 0,
+  needsOptimization: 0,
+  optimized: 0,
+  totalImages: 0,
+  totalSizeMB: 0,
+  potentialSavingsMB: 0,
+};
+
 export default function ProductOptimization() {
   const {
-    products, filter: initialFilter, sortBy: initialSortBy, stats, error: loadError,
+    filter: initialFilter, sortBy: initialSortBy,
     plan, usage, autoOptimize: initialAutoOptimize,
   } = useLoaderData();
   // Optimization no longer goes through a fetcher — it drives /api/optimize
@@ -385,10 +189,32 @@ export default function ProductOptimization() {
   const settingsFetcher = useFetcher();
   const revalidator = useRevalidator();
 
+  // The product list is fetched AFTER this page renders. Building it takes
+  // seconds (a Shopify request per 50 products, plus a HEAD per unmeasured
+  // image), and while it sat in the loader the browser could not finish the
+  // navigation — the click appeared to do nothing for 4-10+ seconds.
+  const catalogFetcher = useFetcher();
+  useEffect(() => {
+    if (catalogFetcher.state === 'idle' && !catalogFetcher.data) {
+      catalogFetcher.load('/api/catalog');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogFetcher.state, catalogFetcher.data]);
+
+  // Memoized so the empty placeholder keeps a stable identity — several
+  // callbacks and memos take `products` as a dependency.
+  const products = useMemo(() => catalogFetcher.data?.products ?? [], [catalogFetcher.data]);
+  const stats = catalogFetcher.data?.stats ?? EMPTY_STATS;
+  const catalogLoading = !catalogFetcher.data;
+  const refreshCatalog = useCallback(() => {
+    catalogFetcher.load('/api/catalog');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogFetcher]);
+
   const [filter, setFilter] = useState(initialFilter);
   const [sortBy, setSortBy] = useState(initialSortBy);
   const [selectedProducts, setSelectedProducts] = useState([]);
-  const [error, setError] = useState(loadError);
+  const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [autoOptimize, setAutoOptimize] = useState(initialAutoOptimize);
 
@@ -406,6 +232,11 @@ export default function ProductOptimization() {
   useEffect(() => {
     setSessionImages(0);
   }, [usage]);
+
+  // buildCatalog reports failure as data, not a rejection, so surface it here.
+  useEffect(() => {
+    if (catalogFetcher.data?.error) setError(catalogFetcher.data.error);
+  }, [catalogFetcher.data]);
 
   /**
    * A run, driven one IMAGE per request from the browser.
@@ -668,12 +499,15 @@ export default function ProductOptimization() {
       setTimeout(() => setSuccessMessage(null), 12000);
     }
 
-    // Quietly re-run the loader in place. liveProgress stays authoritative for
-    // display, so read-after-write metafield lag can't flip a finished product
-    // back to "needs optimization".
+    // Quietly refresh in place: the loader for the usage meter, /api/catalog for
+    // the new scores and sizes. liveProgress stays authoritative for display, so
+    // read-after-write metafield lag can't flip a finished product back to
+    // "needs optimization". Splitting these is why the meter now updates
+    // immediately instead of waiting on a full catalog rebuild.
     revalidator.revalidate();
+    refreshCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products, callApi, publish, revalidator]);
+  }, [products, callApi, publish, revalidator, refreshCatalog]);
 
   // Reflect the saved auto-optimize setting (or surface a gating error).
   useEffect(() => {
@@ -1053,7 +887,15 @@ export default function ProductOptimization() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
-              {displayedProducts.length === 0 ? (
+              {catalogLoading ? (
+                // The page is already interactive here; only the list is waiting.
+                <Box padding="800">
+                  <BlockStack gap="300" inlineAlign="center">
+                    <Spinner accessibilityLabel="Loading your products" size="large" />
+                    <Text as="p" tone="subdued">Loading your products and measuring image sizes…</Text>
+                  </BlockStack>
+                </Box>
+              ) : displayedProducts.length === 0 ? (
                 <EmptyState heading="No products found" image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png">
                   <p>Try adjusting your filters to see products.</p>
                 </EmptyState>
