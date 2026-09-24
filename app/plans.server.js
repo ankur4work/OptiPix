@@ -74,8 +74,8 @@ export const PLANS = [
   {
     tier: "pro",
     name: "Pro",
-    price: 99,
-    priceAnnual: 990,
+    price: 499,
+    priceAnnual: 2499,
     monthlyImages: 50000,
     features: feat(
       "optimize", "webp", "altText", "revert",
