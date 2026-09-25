@@ -106,21 +106,26 @@ export default function Index() {
     },
   ];
 
+  // Numeric stats get the big gradient figure; word values get a chip so long
+  // labels like "Growth & up" can't wrap into an overlapping headline.
   const stats = [
-    { label: "Current plan", value: plan.name },
+    { label: "Current plan", value: plan.name, chip: "brand" },
     { label: "Images used", value: fmt(used) },
     { label: "Images left", value: fmt(remaining) },
-    { label: "Auto-optimize", value: autoStatus.label },
+    { label: "Auto-optimize", value: autoStatus.label, chip: autoStatus.tone || "subdued" },
   ];
 
   return (
     <Page>
       {/* Hero */}
       <div className="pb-hero">
-        <InlineStack align="space-between" blockAlign="center" wrap={false}>
-          <BlockStack gap="200">
-            <h1>Welcome to PixelPerfect</h1>
-            <p>Image optimization &amp; SEO suite — compress, auto-generate alt text, and rank faster.</p>
+        <InlineStack align="space-between" blockAlign="center" wrap={false} gap="600">
+          <BlockStack gap="300">
+            <span className="pb-hero-eyebrow">PixelPerfect</span>
+            <div className="pb-hero-copy">
+              <h1>Faster images, better rankings.</h1>
+              <p>Compress and convert your catalog, auto-generate SEO alt text, and track the page-speed gains — all in one place.</p>
+            </div>
           </BlockStack>
           <Button variant="primary" size="large" onClick={() => navigate("/app/productoptimization")}>
             Optimize images
@@ -131,10 +136,16 @@ export default function Index() {
       <Layout>
         {/* Dashboard stat strip */}
         <Layout.Section>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+          <div className="pb-stat-grid">
             {stats.map((s) => (
               <div key={s.label} className="pb-stat-card">
-                <p className="pb-stat-value">{s.value}</p>
+                {s.chip ? (
+                  <span className={`pb-stat-chip pb-stat-chip--${s.chip}`} title={s.value}>
+                    {s.value}
+                  </span>
+                ) : (
+                  <p className="pb-stat-value">{s.value}</p>
+                )}
                 <p className="pb-stat-label">{s.label}</p>
               </div>
             ))}
