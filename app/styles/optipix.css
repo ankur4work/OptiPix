@@ -28,6 +28,22 @@
 .Polaris-Button--variantPrimary:active:not(:disabled) {
   background: linear-gradient(135deg, #D62F57 0%, #8F1740 100%) !important;
 }
+/* A disabled button must LOOK disabled. The rule above sets the gradient with
+   !important on every primary button, which overrode Polaris's own disabled
+   styling — so a button that could not be clicked looked exactly like one that
+   could, and clicking it appeared to do nothing. */
+.Polaris-Button--variantPrimary:disabled,
+.Polaris-Button--variantPrimary[aria-disabled="true"] {
+  background: #EBEBEB !important;
+  border-color: #EBEBEB !important;
+  color: #8A8A8A !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+.Polaris-Button--variantPrimary:disabled .Polaris-Text--root,
+.Polaris-Button--variantPrimary[aria-disabled="true"] .Polaris-Text--root {
+  color: inherit !important;
+}
 
 /* ── Links ─────────────────────────────────── */
 .Polaris-Link { color: var(--op-accent) !important; }
